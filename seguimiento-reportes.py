@@ -37,6 +37,11 @@ def cargar_datos():
 
 df = cargar_datos()
 
+# Botón para limpiar el caché manualmente en la barra lateral
+if st.sidebar.button("🔄 Actualizar Datos Ahora"):
+    st.cache_data.clear()  # Borra todo el caché de la app
+    st.rerun()             # Recarga la aplicación con los datos nuevos
+
 if df is not None:
     # 2. Filtros Laterales (Sidebar)
     st.sidebar.header("Filtros")
