@@ -5,6 +5,10 @@ import plotly.express as px
 # Configuración de la página
 st.set_page_config(page_title="Seguimiento de Colaboradores", layout="wide", page_icon="📊")
 
+# Auto-refresh cada 30 segundos
+st.logo("https://www.deere.com/assets/images/region-4/logo.png") # (Opcional, un detalle estético)
+st.fragment(run_every=30)(lambda: None)() # Esto fuerza un rerun silencioso de la app cada 30s
+
 st.title("📊 Tablero de Seguimiento de Colaboradores")
 st.markdown("Monitoreo de actividad, accesos y uso de herramientas en base a los registros del repositorio.")
 
