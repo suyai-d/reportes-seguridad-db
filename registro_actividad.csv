@@ -28,4 +28,5 @@ fecha_hora,usuario,accion,cliente
 2026-05-28 16:13:56,X225841,Exportó Reporte a PDF,No especificado
 2026-05-28 16:16:32,X225841,Ingreso al Tablero,
 2026-05-28 16:44:50,X225841,Ingreso al Cierre de Cosecha,
-2026-05-28 16:47:04,X225841,Ingreso al Auditoria Cosecha,N/A
+2026-05-28 16:47:04,X225841,Ingreso al Auditoria Cosecha,
+2026-05-28 16:49:53,X225841,Exportó Reporte Cierre Cosecha a PDF,No especificado
