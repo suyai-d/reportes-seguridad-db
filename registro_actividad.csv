@@ -1,32 +1,7 @@
 fecha_hora,usuario,accion,cliente
-2026-05-27 18:52:32,X225841,Ingreso al Tablero,
-2026-05-27 18:52:44,X225841,Exportó Reporte a PDF,Prueba
-2026-05-27 18:55:24,X090165,Ingreso al Tablero,
-2026-05-27 18:57:03,X090165,Exportó Reporte a PDF,Cravero Gustavo
-2026-05-27 19:01:39,X225841,Ingreso al Tablero,
-2026-05-27 19:01:48,X225841,Exportó Reporte a PDF,Prueba
-2026-05-27 19:14:31,X225841,Ingreso al Tablero,
-2026-05-27 19:14:42,X225841,Ingreso al Tablero,
-2026-05-27 19:18:17,X225841,Ingreso al Tablero,
-2026-05-27 19:20:25,X225841,Ingreso al Tablero,
-2026-05-27 19:22:35,X225841,Ingreso al Tablero,
 2026-05-27 19:27:11,X225841,Ingreso al Checklist,
 2026-05-27 19:27:32,X225841,Exportó Reporte Checklist a PDF,No especificado
-2026-05-27 19:43:52,X225841,Ingreso al Tablero,
-2026-05-27 19:44:04,X225841,Exportó Reporte a PDF,No especificado
-2026-05-27 19:52:04,X225841,Ingreso al Tablero,
-2026-05-27 19:52:13,X225841,Exportó Reporte a PDF,Prueba
-2026-05-27 19:59:31,X225841,Ingreso al Reporte Cosecha,
-2026-05-27 19:59:38,X225841,Exportó Reporte Cosecha a PDF,Suyai
-2026-05-27 20:00:01,X225841,Ingreso al Reporte Cosecha,
-2026-05-27 20:00:07,X225841,Exportó Reporte Cosecha a PDF,No especificado
-2026-05-27 21:41:03,X225841,Ingreso al Reporte Cosecha,
 2026-05-28 12:34:07,X225841,Ingreso al Checklist,
-2026-05-28 16:12:07,X225841,Ingreso al Tablero,
-2026-05-28 16:12:22,X225841,Exportó Reporte a PDF,No especificado
-2026-05-28 16:12:39,X225841,Ingreso al Tablero,
-2026-05-28 16:13:56,X225841,Exportó Reporte a PDF,No especificado
-2026-05-28 16:16:32,X225841,Ingreso al Tablero,
 2026-05-28 16:44:50,X225841,Ingreso al Cierre de Cosecha,
 2026-05-28 16:47:04,X225841,Ingreso al Auditoria Cosecha,
 2026-05-28 16:49:53,X225841,Exportó Reporte Cierre Cosecha a PDF,No especificado
