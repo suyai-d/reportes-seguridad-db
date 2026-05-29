@@ -1,32 +1,35 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import time
 
 # Configuración de la página
 st.set_page_config(page_title="Seguimiento de Colaboradores", layout="wide", page_icon="📊")
-
-# Auto-refresh cada 30 segundos
-st.fragment(run_every=30)(lambda: None)() # Esto fuerza un rerun silencioso de la app cada 30s
 
 st.title("📊 Tablero de Seguimiento de Colaboradores")
 st.markdown("Monitoreo de actividad, accesos y uso de herramientas en base a los registros del repositorio.")
 
 # 1. Carga de datos desde los URLs Raw de GitHub
-# Reemplazamos la ruta estándar por la de raw.githubusercontent
 URL_USUARIOS = "https://raw.githubusercontent.com/suyai-d/reportes-seguridad-db/main/usuarios_permitidos.csv"
 URL_ACTIVIDAD = "https://raw.githubusercontent.com/suyai-d/reportes-seguridad-db/main/registro_actividad.csv"
 
-@st.cache_data(ttl=600)  # Se actualiza cada 10 minutos
-def cargar_datos():
+# Mantenemos un caché intermedio, pero le sumamos dinámica anti-duplicados de GitHub
+@st.cache_data(ttl=600)
+def cargar_datos(timestamp_evita_cache):
     try:
-        df_usuarios = pd.read_csv(URL_USUARIOS)
-        df_actividad = pd.read_csv(URL_ACTIVIDAD)
+        # El parámetro nocache obliga a GitHub a darnos el archivo más nuevo e ignorar su proxy
+        url_u = f"{URL_USUARIOS}?nocache={timestamp_evita_cache}"
+        url_a = f"{URL_ACTIVIDAD}?nocache={timestamp_evita_cache}"
+        
+        df_usuarios = pd.read_csv(url_u)
+        df_actividad = pd.read_csv(url_a)
         
         # Convertir fecha a datetime
         df_actividad['fecha_hora'] = pd.to_datetime(df_actividad['fecha_hora'])
         
         # Cruzar los datos para tener los nombres reales de los colaboradores
         df_master = pd.merge(df_actividad, df_usuarios, left_on='usuario', right_on='usuarios', how='left')
+        
         # Si algún usuario no está en la lista de permitidos, dejamos su código original
         df_master['nombre'] = df_master['nombre'].fillna(df_master['usuario'])
         
@@ -35,16 +38,21 @@ def cargar_datos():
         st.error(f"Error al conectar con las bases de datos de GitHub: {e}")
         return None
 
-df = cargar_datos()
+# 2. Control de datos y botón en la barra lateral
+st.sidebar.header("🔄 Control de Datos")
 
-# Botón para limpiar el caché manualmente en la barra lateral
-if st.sidebar.button("🔄 Actualizar Datos Ahora"):
-    st.cache_data.clear()  # Borra todo el caché de la app
-    st.rerun()             # Recarga la aplicación con los datos nuevos
+# Botón para limpiar el caché manualmente
+if st.sidebar.button("🔄 Actualizar Datos Ahora", use_container_width=True):
+    st.cache_data.clear()  # Borra el caché de Streamlit
+    st.rerun()             # Fuerza el recargo inmediato
+
+# Le pasamos el tiempo actual truncado al minuto como argumento para manejar la actualización de red
+df = cargar_datos(int(time.time() / 60))
 
 if df is not None:
-    # 2. Filtros Laterales (Sidebar)
-    st.sidebar.header("Filtros")
+    # 3. Filtros Laterales (Sidebar)
+    st.sidebar.markdown("---")
+    st.sidebar.header("Filtros de Análisis")
     
     # Filtro de Fecha
     min_fecha = df['fecha_hora'].min().date()
@@ -62,10 +70,11 @@ if df is not None:
         (df['nombre'].isin(usuarios_seleccionados))
     ]
 
-    # 3. Métricas Principales (KPIs)
+    # 4. Métricas Principales (KPIs)
     total_acciones = len(df_filtrado)
     usuarios_activos = df_filtrado['nombre'].nunique()
-    exportaciones = len(df_filtrado[df_filtrado['accion'].str.contains('Exportó', na=False)])
+    # Buscamos de forma general cualquier interacción de exportación
+    exportaciones = len(df_filtrado[df_filtrado['accion'].str.contains('Exportó|PDF', na=False, case=False)])
     
     kpi1, kpi2, kpi3 = st.columns(3)
     kpi1.metric("Total Interacciones", f"{total_acciones}")
@@ -74,12 +83,11 @@ if df is not None:
     
     st.markdown("---")
     
-    # 4. Visualizaciones y Gráficos
+    # 5. Visualizaciones y Gráficos Generales
     col1, col2 = st.columns(2)
     
     with col1:
         st.subheader("📌 Actividad por Colaborador")
-        # Contamos cuántas acciones hizo cada uno
         actividad_usuario = df_filtrado['nombre'].value_counts().reset_index()
         actividad_usuario.columns = ['Colaborador', 'Cantidad de Acciones']
         
@@ -111,7 +119,7 @@ if df is not None:
 
     st.markdown("---")
     
-    # 5. Evolución Temporal e Historial Detallado
+    # 6. Evolución Temporal
     st.subheader("📈 Evolución de Accesos en el Tiempo")
     df_filtrado['fecha'] = df_filtrado['fecha_hora'].dt.date
     evolucion = df_filtrado.groupby('fecha').size().reset_index(name='Cantidad')
@@ -126,17 +134,13 @@ if df is not None:
     )
     st.plotly_chart(fig_line, use_container_width=True)
 
-    # =========================================================================
-    # NUEVA SECCIÓN: CLASIFICACIÓN DE REPORTES EXPORTADOS
-    # =========================================================================
+    # 7. Sección de Clasificación de Reportes Exportados
     st.markdown("---")
     st.subheader("📋 Análisis de Reportes Exportados por Tipo")
     
-    # 1. Filtramos solo las filas que representen una exportación
     df_exportaciones = df_filtrado[df_filtrado['accion'].str.contains('Exportó|PDF', na=False, case=False)].copy()
     
     if not df_exportaciones.empty:
-        # 2. Creamos una función para categorizar el tipo de reporte según el texto de la acción
         def clasificar_reporte(accion):
             accion_lower = str(accion).lower()
             if 'checklist' in accion_lower:
@@ -146,32 +150,25 @@ if df is not None:
             else:
                 return 'General / Otros'
         
-        # Aplicamos la clasificación
         df_exportaciones['Tipo de Reporte'] = df_exportaciones['accion'].apply(clasificar_reporte)
         
-        # 3. Agrupamos los datos para la tabla y el gráfico
         reportes_tipo = df_exportaciones.groupby('Tipo de Reporte').size().reset_index(name='Cantidad Exportada')
         reportes_tipo = reportes_tipo.sort_values(by='Cantidad Exportada', ascending=False)
         
-        # 4. Mostramos la información en dos columnas: Tabla y Gráfico
-        col_tabla, col_grafico = st.columns([2, 3]) # El gráfico tiene un poco más de ancho
+        col_tabla, col_grafico = st.columns([2, 3])
         
         with col_tabla:
             st.markdown("#### 🔢 Resumen en Tabla")
-            # Mostramos una tabla limpia y estilizada
             st.dataframe(
                 reportes_tipo, 
                 use_container_width=True, 
                 hide_index=True
             )
-            
-            # Un detalle: mostrar cuál fue el reporte más generado
             top_reporte = reportes_tipo.iloc[0]['Tipo de Reporte']
             st.success(f"💡 El reporte más solicitado es: **{top_reporte}**")
             
         with col_grafico:
             st.markdown("#### 📊 Distribución Visual")
-            # Gráfico de barras horizontales para ver los tipos de reportes
             fig_reportes = px.bar(
                 reportes_tipo,
                 x='Cantidad Exportada',
@@ -192,10 +189,16 @@ if df is not None:
     else:
         st.info("No se registraron exportaciones de reportes en el rango de fechas seleccionado.")
     
-    # 6. Tabla de datos crudos filtrada
+    # 8. Tabla de datos crudos filtrada (Al final para un mejor cierre visual)
+    st.markdown("---")
     st.subheader("🔍 Historial de Actividad Reciente")
-    # Formateamos la fecha para mostrarla más limpia
-    df_mostrar = df_filtrado[['fecha_hora', 'nombre', 'accion', 'cliente']].sort_values(by='fecha_hora', ascending=False)
+    
+    # Protegemos el render en caso de que la columna 'cliente' no venga en alguna fila
+    columnas_mostrar = ['fecha_hora', 'nombre', 'accion']
+    if 'cliente' in df_filtrado.columns:
+        columnas_mostrar.append('cliente')
+        
+    df_mostrar = df_filtrado[columnas_mostrar].sort_values(by='fecha_hora', ascending=False).copy()
     df_mostrar['fecha_hora'] = df_mostrar['fecha_hora'].dt.strftime('%d/%m/%Y %H:%M:%S')
     
     st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
