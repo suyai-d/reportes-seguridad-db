@@ -125,6 +125,72 @@ if df is not None:
         template='plotly_white'
     )
     st.plotly_chart(fig_line, use_container_width=True)
+
+    # =========================================================================
+    # NUEVA SECCIÓN: CLASIFICACIÓN DE REPORTES EXPORTADOS
+    # =========================================================================
+    st.markdown("---")
+    st.subheader("📋 Análisis de Reportes Exportados por Tipo")
+    
+    # 1. Filtramos solo las filas que representen una exportación
+    df_exportaciones = df_filtrado[df_filtrado['accion'].str.contains('Exportó|PDF', na=False, case=False)].copy()
+    
+    if not df_exportaciones.empty:
+        # 2. Creamos una función para categorizar el tipo de reporte según el texto de la acción
+        def clasificar_reporte(accion):
+            accion_lower = str(accion).lower()
+            if 'checklist' in accion_lower:
+                return 'Checklist'
+            elif 'cosecha' in accion_lower:
+                return 'Reporte Cosecha'
+            else:
+                return 'General / Otros'
+        
+        # Aplicamos la clasificación
+        df_exportaciones['Tipo de Reporte'] = df_exportaciones['accion'].apply(clasificar_reporte)
+        
+        # 3. Agrupamos los datos para la tabla y el gráfico
+        reportes_tipo = df_exportaciones.groupby('Tipo de Reporte').size().reset_index(name='Cantidad Exportada')
+        reportes_tipo = reportes_tipo.sort_values(by='Cantidad Exportada', ascending=False)
+        
+        # 4. Mostramos la información en dos columnas: Tabla y Gráfico
+        col_tabla, col_grafico = st.columns([2, 3]) # El gráfico tiene un poco más de ancho
+        
+        with col_tabla:
+            st.markdown("#### 🔢 Resumen en Tabla")
+            # Mostramos una tabla limpia y estilizada
+            st.dataframe(
+                reportes_tipo, 
+                use_container_width=True, 
+                hide_index=True
+            )
+            
+            # Un detalle: mostrar cuál fue el reporte más generado
+            top_reporte = reportes_tipo.iloc[0]['Tipo de Reporte']
+            st.success(f"💡 El reporte más solicitado es: **{top_reporte}**")
+            
+        with col_grafico:
+            st.markdown("#### 📊 Distribución Visual")
+            # Gráfico de barras horizontales para ver los tipos de reportes
+            fig_reportes = px.bar(
+                reportes_tipo,
+                x='Cantidad Exportada',
+                y='Tipo de Reporte',
+                orientation='h',
+                color='Tipo de Reporte',
+                color_discrete_sequence=px.colors.qualitative.Prism,
+                template='plotly_white'
+            )
+            fig_reportes.update_layout(
+                showlegend=False,
+                xaxis_title="Cantidad de PDFs Generados",
+                yaxis_title="",
+                yaxis={'categoryorder':'total ascending'}
+            )
+            st.plotly_chart(fig_reportes, use_container_width=True)
+            
+    else:
+        st.info("No se registraron exportaciones de reportes en el rango de fechas seleccionado.")
     
     # 6. Tabla de datos crudos filtrada
     st.subheader("🔍 Historial de Actividad Reciente")
