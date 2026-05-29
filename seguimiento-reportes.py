@@ -9,34 +9,47 @@ st.set_page_config(page_title="Seguimiento de Colaboradores", layout="wide", pag
 st.title("📊 Tablero de Seguimiento de Colaboradores")
 st.markdown("Monitoreo de actividad, accesos y uso de herramientas en base a los registros del repositorio.")
 
-# 1. Carga de datos desde los URLs Raw de GitHub
-URL_USUARIOS = "https://raw.githubusercontent.com/suyai-d/reportes-seguridad-db/main/usuarios_permitidos.csv"
-URL_ACTIVIDAD = "https://raw.githubusercontent.com/suyai-d/reportes-seguridad-db/main/registro_actividad.csv"
+# 1. Carga de datos usando la API de GitHub (Evita el delay de la CDN Raw)
+USER = "suyai-d"
+REPO = "reportes-seguridad-db"
+BRANCH = "main"  # Cambialo a "master" si tu rama principal se llama así
 
-# Mantenemos un caché intermedio, pero le sumamos dinámica anti-duplicados de GitHub
 @st.cache_data(ttl=600)
 def cargar_datos(timestamp_evita_cache):
     try:
-        # El parámetro nocache obliga a GitHub a darnos el archivo más nuevo e ignorar su proxy
-        url_u = f"{URL_USUARIOS}?nocache={timestamp_evita_cache}"
-        url_a = f"{URL_ACTIVIDAD}?nocache={timestamp_evita_cache}"
+        # Usamos las URLs de la API de contenidos de GitHub para saltearnos la CDN vieja
+        url_u = f"https://api.github.com/repos/{USER}/{REPO}/contents/usuarios_permitidos.csv?ref={BRANCH}"
+        url_a = f"https://api.github.com/repos/{USER}/{REPO}/contents/registro_actividad.csv?ref={BRANCH}"
         
-        df_usuarios = pd.read_csv(url_u)
-        df_actividad = pd.read_csv(url_a)
+        # Agregamos un User-Agent básico porque la API de GitHub lo exige para consultas anónimas
+        headers = {"User-Agent": "Streamlit-App", "Cache-Control": "no-cache"}
+        
+        # Leemos los CSVs pasando las cabeceras de no-cache a nivel HTTP
+        df_usuarios = pd.read_csv(url_u, storage_options={"headers": headers})
+        df_actividad = pd.read_csv(url_a, storage_options={"headers": headers})
         
         # Convertir fecha a datetime
         df_actividad['fecha_hora'] = pd.to_datetime(df_actividad['fecha_hora'])
         
         # Cruzar los datos para tener los nombres reales de los colaboradores
         df_master = pd.merge(df_actividad, df_usuarios, left_on='usuario', right_on='usuarios', how='left')
-        
-        # Si algún usuario no está en la lista de permitidos, dejamos su código original
         df_master['nombre'] = df_master['nombre'].fillna(df_master['usuario'])
         
         return df_master
     except Exception as e:
-        st.error(f"Error al conectar con las bases de datos de GitHub: {e}")
-        return None
+        st.error(f"Error al conectar con la API de GitHub: {e}")
+        # Si la API falla por límite de consultas, intentamos el método tradicional por las dudas
+        try:
+            url_raw_u = f"https://raw.githubusercontent.com/{USER}/{REPO}/{BRANCH}/usuarios_permitidos.csv?nocache={timestamp_evita_cache}"
+            url_raw_a = f"https://raw.githubusercontent.com/{USER}/{REPO}/{BRANCH}/registro_actividad.csv?nocache={timestamp_evita_cache}"
+            df_usuarios = pd.read_csv(url_raw_u)
+            df_actividad = pd.read_csv(url_raw_a)
+            df_actividad['fecha_hora'] = pd.to_datetime(df_actividad['fecha_hora'])
+            df_master = pd.merge(df_actividad, df_usuarios, left_on='usuario', right_on='usuarios', how='left')
+            df_master['nombre'] = df_master['nombre'].fillna(df_master['usuario'])
+            return df_master
+        except:
+            return None
 
 # 2. Control de datos y botón en la barra lateral
 st.sidebar.header("🔄 Control de Datos")
