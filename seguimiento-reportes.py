@@ -9,36 +9,41 @@ st.set_page_config(page_title="Seguimiento de Colaboradores", layout="wide", pag
 st.title("📊 Tablero de Seguimiento de Colaboradores")
 st.markdown("Monitoreo de actividad, accesos y uso de herramientas en base a los registros del repositorio.")
 
-# 1. Carga de datos usando la API de GitHub (Evita el delay de la CDN Raw)
+# 1. Carga de datos usando la API de GitHub optimizada para datos Raw instantáneos
 USER = "suyai-d"
 REPO = "reportes-seguridad-db"
-BRANCH = "main"  # Cambialo a "master" si tu rama principal se llama así
+BRANCH = "main"
 
 @st.cache_data(ttl=600)
 def cargar_datos(timestamp_evita_cache):
     try:
-        # Usamos las URLs de la API de contenidos de GitHub para saltearnos la CDN vieja
+        # Mantenemos las URLs de la API de contenidos para evitar la CDN de GitHub
         url_u = f"https://api.github.com/repos/{USER}/{REPO}/contents/usuarios_permitidos.csv?ref={BRANCH}"
         url_a = f"https://api.github.com/repos/{USER}/{REPO}/contents/registro_actividad.csv?ref={BRANCH}"
         
-        # Agregamos un User-Agent básico porque la API de GitHub lo exige para consultas anónimas
-        headers = {"User-Agent": "Streamlit-App", "Cache-Control": "no-cache"}
+        # CRUCIAL: 'application/vnd.github.v3.raw' le dice a la API que devuelva el archivo plano (CSV)
+        # en lugar del JSON con metadatos que rompía Pandas.
+        headers = {
+            "User-Agent": "Streamlit-App",
+            "Accept": "application/vnd.github.v3.raw",
+            "Cache-Control": "no-cache"
+        }
         
-        # Leemos los CSVs pasando las cabeceras de no-cache a nivel HTTP
+        # Leemos los CSVs usando las cabeceras HTTP correctas
         df_usuarios = pd.read_csv(url_u, storage_options={"headers": headers})
         df_actividad = pd.read_csv(url_a, storage_options={"headers": headers})
         
         # Convertir fecha a datetime
         df_actividad['fecha_hora'] = pd.to_datetime(df_actividad['fecha_hora'])
         
-        # Cruzar los datos para tener los nombres reales de los colaboradores
-        df_master = pd.merge(df_actividad, df_usuarios, left_on='usuario', right_on='usuarios', how='left')
-        df_master['nombre'] = df_master['nombre'].fillna(df_master['usuario'])
+        # Cruzar los datos para tener los nombres reales de los colaboradores 
+        df_master = pd.merge(df_actividad, df_usuarios, left_on='usuario', right_on='usuarios', how='left') [cite: 1, 2]
+        df_master['nombre'] = df_master['nombre'].fillna(df_master['usuario']) [cite: 1, 2]
         
         return df_master
     except Exception as e:
         st.error(f"Error al conectar con la API de GitHub: {e}")
-        # Si la API falla por límite de consultas, intentamos el método tradicional por las dudas
+        # Si la API falla o excede el límite de cuota, usamos el plan B (el método tradicional con timestamp)
         try:
             url_raw_u = f"https://raw.githubusercontent.com/{USER}/{REPO}/{BRANCH}/usuarios_permitidos.csv?nocache={timestamp_evita_cache}"
             url_raw_a = f"https://raw.githubusercontent.com/{USER}/{REPO}/{BRANCH}/registro_actividad.csv?nocache={timestamp_evita_cache}"
