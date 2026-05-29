@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import time
+import requests  # <-- Importante para manejar la API de GitHub de forma limpia
 
 # Configuración de la página
 st.set_page_config(page_title="Seguimiento de Colaboradores", layout="wide", page_icon="📊")
@@ -17,33 +18,40 @@ BRANCH = "main"
 @st.cache_data(ttl=600)
 def cargar_datos(timestamp_evita_cache):
     try:
-        # Mantenemos las URLs de la API de contenidos para evitar la CDN de GitHub
+        # Direcciones de la API de contenidos
         url_u = f"https://api.github.com/repos/{USER}/{REPO}/contents/usuarios_permitidos.csv?ref={BRANCH}"
         url_a = f"https://api.github.com/repos/{USER}/{REPO}/contents/registro_actividad.csv?ref={BRANCH}"
         
-        # CRUCIAL: 'application/vnd.github.v3.raw' le dice a la API que devuelva el archivo plano (CSV)
-        # en lugar del JSON con metadatos que rompía Pandas.
         headers = {
             "User-Agent": "Streamlit-App",
-            "Accept": "application/vnd.github.v3.raw",
+            "Accept": "application/vnd.github.v3.raw",  # Esto le exige el texto plano a GitHub
             "Cache-Control": "no-cache"
         }
         
-        # Leemos los CSVs usando las cabeceras HTTP correctas
-        df_usuarios = pd.read_csv(url_u, storage_options={"headers": headers})
-        df_actividad = pd.read_csv(url_a, storage_options={"headers": headers})
+        # Realizamos las descargas explícitas del texto usando requests
+        res_usuarios = requests.get(url_u, headers=headers)
+        res_actividad = requests.get(url_a, headers=headers)
+        
+        # Si la API responde OK (Código 200), leemos el contenido de texto directo
+        if res_usuarios.status_code == 200 and res_actividad.status_code == 200:
+            from io import StringIO
+            df_usuarios = pd.read_csv(StringIO(res_usuarios.text))
+            df_actividad = pd.read_csv(StringIO(res_actividad.text))
+        else:
+            # Si hay algún problema con la cuota de la API, forzamos un error para ir al Plan B
+            raise Exception("No se pudo obtener data limpia de la API")
         
         # Convertir fecha a datetime
         df_actividad['fecha_hora'] = pd.to_datetime(df_actividad['fecha_hora'])
         
         # Cruzar los datos para tener los nombres reales de los colaboradores 
-        df_master = pd.merge(df_actividad, df_usuarios, left_on='usuario', right_on='usuarios', how='left') [cite: 1, 2]
-        df_master['nombre'] = df_master['nombre'].fillna(df_master['usuario']) [cite: 1, 2]
+        df_master = pd.merge(df_actividad, df_usuarios, left_on='usuario', right_on='usuarios', how='left')
+        df_master['nombre'] = df_master['nombre'].fillna(df_master['usuario'])
         
         return df_master
+        
     except Exception as e:
-        st.error(f"Error al conectar con la API de GitHub: {e}")
-        # Si la API falla o excede el límite de cuota, usamos el plan B (el método tradicional con timestamp)
+        # PLAN B: Si la API llega a fallar, cae acá y usa el método tradicional con el truco anti-cache
         try:
             url_raw_u = f"https://raw.githubusercontent.com/{USER}/{REPO}/{BRANCH}/usuarios_permitidos.csv?nocache={timestamp_evita_cache}"
             url_raw_a = f"https://raw.githubusercontent.com/{USER}/{REPO}/{BRANCH}/registro_actividad.csv?nocache={timestamp_evita_cache}"
