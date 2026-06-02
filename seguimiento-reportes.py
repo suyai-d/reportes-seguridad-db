@@ -19,14 +19,14 @@ USER = "suyai-d"
 REPO = "reportes-seguridad-db"
 BRANCH = "main"
 
-# Verificar si existe un Token en los secretos para persistencia remota (Streamlit Cloud)
+# Verificar si existe un Token en los secretos para poder escribir en GitHub de forma remota
 GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", None)
 
 # --- FUNCIONES DE CARGA Y ESCRITURA ---
 
 @st.cache_data(ttl=600)
 def cargar_datos_csv(nombre_archivo, timestamp_evita_cache):
-    """Descarga de manera directa y optimizada los archivos CSV desde la API de contenidos de GitHub"""
+    """Descarga de manera directa los archivos CSV desde la API de contenidos de GitHub"""
     url = f"https://api.github.com/repos/{USER}/{REPO}/contents/{nombre_archivo}?ref={BRANCH}"
     headers = {
         "User-Agent": "Streamlit-App",
@@ -43,57 +43,61 @@ def cargar_datos_csv(nombre_archivo, timestamp_evita_cache):
         else:
             raise Exception()
     except:
-        # PLAN B: Canal tradicional por URL RAW si falla la API
         try:
             url_raw = f"https://raw.githubusercontent.com/{USER}/{REPO}/{BRANCH}/{nombre_archivo}?nocache={timestamp_evita_cache}"
             return pd.read_csv(url_raw, on_bad_lines='skip')
         except:
             return pd.DataFrame()
 
-def guardar_registro_manual(nueva_fila_df, nombre_archivo, timestamp_cache):
-    """Guarda el nuevo registro manual. Soporta escritura local y remota vía API de GitHub"""
-    if GITHUB_TOKEN:
-        url_api = f"https://api.github.com/repos/{USER}/{REPO}/contents/{nombre_archivo}"
-        headers_json = {
-            "Authorization": f"token {GITHUB_TOKEN}",
-            "Accept": "application/vnd.github.v3+json"
-        }
+def guardar_registro_manual(nueva_fila_df, nombre_archivo):
+    """Guarda el nuevo registro manual haciendo un COMMIT real en el repositorio de GitHub"""
+    if not GITHUB_TOKEN:
+        st.error("⚠️ No se encontró el 'GITHUB_TOKEN' en los Secrets de Streamlit. No se puede modificar el archivo en GitHub.")
+        return False
         
-        res = requests.get(url_api, headers=headers_json)
-        sha = None
-        df_existente = pd.DataFrame()
+    url_api = f"https://api.github.com/repos/{USER}/{REPO}/contents/{nombre_archivo}"
+    headers_json = {
+        "Authorization": f"token {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    
+    # 1. Obtener el archivo actual y su SHA obligatorio para poder hacer el update
+    res = requests.get(url_api, headers=headers_json)
+    sha = None
+    df_existente = pd.DataFrame()
+    
+    if res.status_code == 200:
+        datos_archivo = res.json()
+        sha = datos_archivo['sha']
+        contenido_crudo = base64.b64decode(datos_archivo['content']).decode('utf-8')
+        df_existente = pd.read_csv(StringIO(contenido_crudo), on_bad_lines='skip')
+    elif res.status_code != 404:
+        st.error(f"Error al conectar con la API de GitHub: Código {res.status_code}")
+        return False
+    
+    # 2. Concatenar la nueva fila respetando el formato original
+    df_total = pd.concat([df_existente, nueva_fila_df], ignore_index=True)
+    csv_string = df_total.to_csv(index=False)
+    contenido_base64 = base64.b64encode(csv_string.encode('utf-8')).decode('utf-8')
+    
+    # 3. Armar el Push/Commit hacia GitHub
+    payload = {
+        "message": f"🤖 Registro manual de campo - {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+        "content": contenido_base64,
+        "branch": BRANCH
+    }
+    if sha:
+        payload["sha"] = sha
         
-        if res.status_code == 200:
-            datos_archivo = res.json()
-            sha = datos_archivo['sha']
-            contenido_crudo = base64.b64decode(datos_archivo['content']).decode('utf-8')
-            df_existente = pd.read_csv(StringIO(contenido_crudo), on_bad_lines='skip')
-        
-        df_total = pd.concat([df_existente, nueva_fila_df], ignore_index=True)
-        csv_string = df_total.to_csv(index=False)
-        contenido_base64 = base64.b64encode(csv_string.encode('utf-8')).decode('utf-8')
-        
-        payload = {
-            "message": f"🤖 Registro personalizado de campo - {datetime.now().strftime('%d/%m/%Y %H:%M')}",
-            "content": contenido_base64,
-            "branch": BRANCH
-        }
-        if sha:
-            payload["sha"] = sha
-            
-        res_put = requests.put(url_api, headers=headers_json, data=json.dumps(payload))
-        return res_put.status_code in [200, 201]
-    else:
-        try:
-            df_existente = pd.read_csv(nombre_archivo, on_bad_lines='skip')
-        except:
-            df_existente = pd.DataFrame(columns=nueva_fila_df.columns)
-            
-        df_total = pd.concat([df_existente, nueva_fila_df], ignore_index=True)
-        df_total.to_csv(nombre_archivo, index=False)
+    res_put = requests.put(url_api, headers=headers_json, data=json.dumps(payload))
+    
+    if res_put.status_code in [200, 201]:
         return True
+    else:
+        st.error(f"GitHub rechazó la actualización. Respuesta: {res_put.text}")
+        return False
 
-# Control de tiempo para evitar cache persistente en actualizaciones
+# Control de tiempo para refresco de red
 reloader = int(time.time() / 60)
 
 # Carga de catálogos e información estructural
@@ -113,7 +117,7 @@ with tab1:
     if not df_orgs.empty and 'Organización' in df_orgs.columns:
         lista_clientes = sorted(df_orgs['Organización'].dropna().unique().tolist())
     else:
-        lista_clientes = ["ADJ SRL", "DE GIORGIO SA", "H&H Outfitters SA", "Schiaroli Horacio Ramon"]
+        lista_clientes = ["ADJ SRL", "DE GIORGIO SA", "H&H Outfitters SA"]
         
     if not df_usuarios.empty and 'usuarios' in df_usuarios.columns:
         lista_usuarios_x = sorted(df_usuarios['usuarios'].dropna().unique().tolist())
@@ -135,29 +139,30 @@ with tab1:
                 "Tipo de Registro / Actividad",
                 ["Visita / Ensayo AA", "Reporte 360", "Reporte personalizado", "Reunión / Capacitación individual"]
             )
-            observaciones_sel = st.text_area("Observaciones del Registro", placeholder="Escribí los detalles del acuerdo, novedades de la visita o estado de la máquina...")
+            # NUEVO CAMPO: Horas invertidas en la gestión
+            horas_sel = st.number_input("Tiempo Invertido (en horas dedicadas)", min_value=0.1, max_value=24.0, value=1.0, step=0.5)
+            observaciones_sel = st.text_area("Observaciones del Registro", placeholder="Escribí los detalles aquí...")
             
         st.markdown(" ")
         boton_guardar = st.form_submit_button("💾 Guardar Registro de Actividad", use_container_width=True)
         
         if boton_guardar:
+            # Construcción exacta según las columnas de tu archivo registro_personalizado.csv
             nueva_actividad = pd.DataFrame([{
                 "fecha": fecha_sel.strftime("%d/%m/%Y"),
                 "razon_social": cliente_sel,
                 "usuario_x": usuario_sel,
                 "registro": tipo_registro_sel,
-                "tiempo": 1.0,
+                "tiempo": float(horas_sel),
                 "observaciones": observaciones_sel if observaciones_sel else "Sin observaciones"
             }])
             
-            with st.spinner("Guardando información en la base de datos centralizada..."):
-                if guardar_registro_manual(nueva_actividad, "registro_personalizado.csv", reloader):
-                    st.success("🎉 ¡Registro almacenado correctamente! Podés visualizarlo ingresando a la pestaña del Tablero.")
+            with st.spinner("Realizando commit y guardando en tu repositorio de GitHub..."):
+                if guardar_registro_manual(nueva_actividad, "registro_personalizado.csv"):
+                    st.success("🎉 ¡Registro impactado con éxito en GitHub! Datos actualizados.")
                     st.cache_data.clear()
                     time.sleep(1)
                     st.rerun()
-                else:
-                    st.error("Hubo un problema al procesar el archivo. Verificá los accesos a tu repositorio.")
 
 # ==========================================
 # PESTAÑA 2: TABLERO DE CONTROL UNIFICADO
@@ -201,12 +206,11 @@ with tab2:
         else:
             df = df_auto_unificado
 
-        # --- BLINDAJE ULTRA-ESTRICTO DE LA COLUMNA CLIENTE ---
-        # Convertimos todo a string y limpiamos nulos ANTES de llamar a sorted()
+        # --- BLINDAJE DE LA COLUMNA CLIENTE ---
         df['cliente'] = df['cliente'].fillna('No especificado').astype(str).str.strip()
         df['cliente'] = df['cliente'].replace(['', 'nan', 'N/A', 'None'], 'No especificado')
 
-        # --- FILTROS DE LA SEGUNDA PESTAÑA ---
+        # --- FILTROS ---
         st.sidebar.markdown("---")
         st.sidebar.header("Filtros de Análisis")
         
@@ -223,7 +227,7 @@ with tab2:
         origenes_disponibles = sorted(df['Origen'].unique())
         origenes_seleccionados = st.sidebar.multiselect("Origen de la Actividad", origenes_disponibles, default=origenes_disponibles)
 
-        # Filtrado del dataframe combinado
+        # Filtrado
         df_filtrado = df[
             (df['fecha_hora'].dt.date >= f_inicio) & 
             (df['fecha_hora'].dt.date <= f_final) & 
@@ -232,7 +236,7 @@ with tab2:
             (df['Origen'].isin(origenes_seleccionados))
         ]
 
-        # 4. Métricas Principales (KPIs)
+        # 4. KPIs
         total_acciones = len(df_filtrado)
         usuarios_activos = df_filtrado['nombre'].nunique()
         exportaciones = len(df_filtrado[df_filtrado['accion'].str.contains('Exportó|PDF|Reporte|Visita|Reunión', na=False, case=False)])
@@ -244,7 +248,7 @@ with tab2:
         
         st.markdown("---")
         
-        # 5. Visualizaciones y Gráficos Generales
+        # 5. Gráficos
         col1, col2 = st.columns(2)
         
         with col1:
@@ -281,7 +285,7 @@ with tab2:
 
         st.markdown("---")
         
-        # 6. Evolución Temporal Combinada
+        # 6. Evolución Temporal
         st.subheader("📈 Evolución de Gestiones en el Tiempo")
         df_filtrado['fecha'] = df_filtrado['fecha_hora'].dt.date
         evolucion = df_filtrado.groupby(['fecha', 'Origen']).size().reset_index(name='Cantidad')
@@ -298,7 +302,7 @@ with tab2:
         )
         st.plotly_chart(fig_line, use_container_width=True)
 
-        # 7. Sección de Clasificación de Reportes y Tareas de Campo
+        # 7. Clasificación de Tareas
         st.markdown("---")
         st.subheader("📋 Análisis de Reportes y Tareas de Campo por Tipo")
         
@@ -324,9 +328,6 @@ with tab2:
             with col_tabla:
                 st.markdown("#### 🔢 Resumen en Tabla")
                 st.dataframe(reportes_tipo, use_container_width=True, hide_index=True)
-                if not reportes_tipo.empty:
-                    top_reporte = reportes_tipo.iloc[0]['Tipo de Tarea']
-                    st.success(f"💡 La tarea dominante actual es: **{top_reporte}**")
                 
             with col_grafico:
                 st.markdown("#### 📊 Distribución Visual Unificada")
@@ -342,11 +343,10 @@ with tab2:
                 )
                 fig_reportes.update_layout(yaxis={'categoryorder':'total ascending'})
                 st.plotly_chart(fig_reportes, use_container_width=True)
-                
         else:
             st.info("No se registraron tareas ni exportaciones en los filtros seleccionados.")
         
-        # 8. Tabla de datos unificada final
+        # 8. Historial Final
         st.markdown("---")
         st.subheader("🔍 Historial Unificado de Actividad Reciente")
         
