@@ -9,7 +9,7 @@ from io import StringIO
 from datetime import datetime
 
 # Configuración de la página
-st.set_page_config(page_title="Seguimiento de Colaboradores y Gestión AA", layout="wide", page_icon="📊")
+st.set_page_config(page_title="Seguimiento de Colaboradores", layout="wide", page_icon="📊")
 
 st.title("📊 Tablero de Seguimiento de Colaboradores")
 st.markdown("Monitoreo de actividad, accesos y uso de herramientas en base a los registros del repositorio.")
@@ -52,7 +52,6 @@ def cargar_datos_csv(nombre_archivo, timestamp_evita_cache):
 
 def guardar_registro_manual(nueva_fila_df, nombre_archivo, timestamp_cache):
     """Guarda el nuevo registro manual. Soporta escritura local y remota vía API de GitHub"""
-    # Intentar guardado por API de GitHub si el Token está configurado (Esencial para Streamlit Cloud)
     if GITHUB_TOKEN:
         url_api = f"https://api.github.com/repos/{USER}/{REPO}/contents/{nombre_archivo}"
         headers_json = {
@@ -85,7 +84,6 @@ def guardar_registro_manual(nueva_fila_df, nombre_archivo, timestamp_cache):
         res_put = requests.put(url_api, headers=headers_json, data=json.dumps(payload))
         return res_put.status_code in [200, 201]
     else:
-        # Modo de contingencia Local (si estás corriendo el script directo en tu PC)
         try:
             df_existente = pd.read_csv(nombre_archivo, on_bad_lines='skip')
         except:
@@ -95,7 +93,7 @@ def guardar_registro_manual(nueva_fila_df, nombre_archivo, timestamp_cache):
         df_total.to_csv(nombre_archivo, index=False)
         return True
 
-# Control de tiempo para evitar caché persistente en actualizaciones
+# Control de tiempo para evitar cache persistente en actualizaciones
 reloader = int(time.time() / 60)
 
 # Carga de catálogos e información estructural
@@ -112,7 +110,6 @@ with tab1:
     st.header("📝 Ingreso de Registros Personalizados")
     st.markdown("Asentá las actividades, ensayos y visitas presenciales que realizás con las cuentas de forma externa a los reportes automáticos.")
     
-    # Preparar listas desplegables seguras basadas en tus CSVs
     if not df_orgs.empty and 'Organización' in df_orgs.columns:
         lista_clientes = sorted(df_orgs['Organización'].dropna().unique().tolist())
     else:
@@ -144,20 +141,19 @@ with tab1:
         boton_guardar = st.form_submit_button("💾 Guardar Registro de Actividad", use_container_width=True)
         
         if boton_guardar:
-            # Construir el DataFrame con la estructura idéntica de tu registro_personalizado.csv
             nueva_actividad = pd.DataFrame([{
                 "fecha": fecha_sel.strftime("%d/%m/%Y"),
                 "razon_social": cliente_sel,
                 "usuario_x": usuario_sel,
                 "registro": tipo_registro_sel,
-                "tiempo": 1.0, # Unidad de medida estándar por defecto
+                "tiempo": 1.0,
                 "observaciones": observaciones_sel if observaciones_sel else "Sin observaciones"
             }])
             
             with st.spinner("Guardando información en la base de datos centralizada..."):
                 if guardar_registro_manual(nueva_actividad, "registro_personalizado.csv", reloader):
                     st.success("🎉 ¡Registro almacenado correctamente! Podés visualizarlo ingresando a la pestaña del Tablero.")
-                    st.cache_data.clear() # Limpieza de caché obligatoria para forzar lectura de los nuevos datos
+                    st.cache_data.clear()
                     time.sleep(1)
                     st.rerun()
                 else:
@@ -167,13 +163,11 @@ with tab1:
 # PESTAÑA 2: TABLERO DE CONTROL UNIFICADO
 # ==========================================
 with tab2:
-    # Controles de datos globales en la barra lateral
     st.sidebar.header("🔄 Control de Datos")
     if st.sidebar.button("🔄 Actualizar Datos Ahora", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
 
-    # Carga de las dos fuentes primarias de información
     df_auto_crudo = cargar_datos_csv("registro_actividad.csv", reloader)
     df_manual_crudo = cargar_datos_csv("registro_personalizado.csv", reloader)
 
@@ -184,17 +178,12 @@ with tab2:
         
         df_auto_m = pd.merge(df_auto_crudo, df_usuarios, left_on='usuario', right_on='usuarios', how='left')
         df_auto_m['nombre'] = df_auto_m['nombre'].fillna(df_auto_m['usuario'])
-        
-        if 'cliente' in df_auto_m.columns:
-            df_auto_m['cliente'] = df_auto_m['cliente'].astype(str).str.strip().replace(['', 'nan', 'N/A', 'None'], 'No especificado')
-        else:
-            df_auto_m['cliente'] = 'No especificado'
-            
         df_auto_m['Origen'] = 'Automático (Uso de Apps)'
+        
         df_auto_unificado = df_auto_m[['fecha_hora', 'nombre', 'accion', 'cliente', 'Origen']].copy()
         
-        # --- PROCESAMIENTO CANAL MANUAL (REGISTROS PERSONALIZADOS) ---
-        if not df_manual_crudo.empty:
+        # --- PROCESAMIENTO CANAL MANUAL ---
+        if not df_manual_crudo.empty and len(df_manual_crudo) > 0:
             df_manual_crudo['fecha_hora'] = pd.to_datetime(df_manual_crudo['fecha'], format="%d/%m/%Y", errors='coerce')
             df_manual_crudo = df_manual_crudo.dropna(subset=['fecha_hora'])
             
@@ -205,15 +194,17 @@ with tab2:
                 'registro': 'accion',
                 'razon_social': 'cliente'
             })
-            df_manual_m['cliente'] = df_manual_m['cliente'].astype(str).str.strip().replace(['', 'nan', 'N/A', 'None'], 'No especificado')
             df_manual_m['Origen'] = 'Manual (Registros Campo)'
-            
             df_manual_unificado = df_manual_m[['fecha_hora', 'nombre', 'accion', 'cliente', 'Origen']].copy()
             
-            # UNIFICACIÓN ABSOLUTA: Combinar ambas fuentes en una sola variable 'df'
             df = pd.concat([df_auto_unificado, df_manual_unificado], ignore_index=True)
         else:
             df = df_auto_unificado
+
+        # --- BLINDAJE ULTRA-ESTRICTO DE LA COLUMNA CLIENTE ---
+        # Convertimos todo a string y limpiamos nulos ANTES de llamar a sorted()
+        df['cliente'] = df['cliente'].fillna('No especificado').astype(str).str.strip()
+        df['cliente'] = df['cliente'].replace(['', 'nan', 'N/A', 'None'], 'No especificado')
 
         # --- FILTROS DE LA SEGUNDA PESTAÑA ---
         st.sidebar.markdown("---")
@@ -283,7 +274,7 @@ with tab2:
                 values='Frecuencia', 
                 names='Origen', 
                 hole=0.4,
-                color_discrete_sequence=['#2ca02c', '#1f77b4'],
+                color_discrete_sequence=['#1f77b4', '#2ca02c'],
                 template='plotly_white'
             )
             st.plotly_chart(fig_pie, use_container_width=True)
