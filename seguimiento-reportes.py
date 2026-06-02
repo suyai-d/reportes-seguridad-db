@@ -2,257 +2,368 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import time
-import requests  # <-- Importante para manejar la API de GitHub de forma limpia
+import requests
+import json
+import base64
+from io import StringIO
+from datetime import datetime
 
 # Configuración de la página
-st.set_page_config(page_title="Seguimiento de Colaboradores", layout="wide", page_icon="📊")
+st.set_page_config(page_title="Seguimiento de Colaboradores y Gestión AA", layout="wide", page_icon="📊")
 
 st.title("📊 Tablero de Seguimiento de Colaboradores")
 st.markdown("Monitoreo de actividad, accesos y uso de herramientas en base a los registros del repositorio.")
 
-# 1. Carga de datos usando la API de GitHub optimizada para datos Raw instantáneos
+# Credenciales del repositorio
 USER = "suyai-d"
 REPO = "reportes-seguridad-db"
 BRANCH = "main"
 
+# Verificar si existe un Token en los secretos para persistencia remota (Streamlit Cloud)
+GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", None)
+
+# --- FUNCIONES DE CARGA Y ESCRITURA ---
+
 @st.cache_data(ttl=600)
-def cargar_datos(timestamp_evita_cache):
-    try:
-        # Direcciones de la API de contenidos
-        url_u = f"https://api.github.com/repos/{USER}/{REPO}/contents/usuarios_permitidos.csv?ref={BRANCH}"
-        url_a = f"https://api.github.com/repos/{USER}/{REPO}/contents/registro_actividad.csv?ref={BRANCH}"
+def cargar_datos_csv(nombre_archivo, timestamp_evita_cache):
+    """Descarga de manera directa y optimizada los archivos CSV desde la API de contenidos de GitHub"""
+    url = f"https://api.github.com/repos/{USER}/{REPO}/contents/{nombre_archivo}?ref={BRANCH}"
+    headers = {
+        "User-Agent": "Streamlit-App",
+        "Accept": "application/vnd.github.v3.raw",
+        "Cache-Control": "no-cache"
+    }
+    if GITHUB_TOKEN:
+        headers["Authorization"] = f"token {GITHUB_TOKEN}"
         
-        headers = {
-            "User-Agent": "Streamlit-App",
-            "Accept": "application/vnd.github.v3.raw",
-            "Cache-Control": "no-cache"
+    try:
+        res = requests.get(url, headers=headers)
+        if res.status_code == 200:
+            return pd.read_csv(StringIO(res.text), on_bad_lines='skip')
+        else:
+            raise Exception()
+    except:
+        # PLAN B: Canal tradicional por URL RAW si falla la API
+        try:
+            url_raw = f"https://raw.githubusercontent.com/{USER}/{REPO}/{BRANCH}/{nombre_archivo}?nocache={timestamp_evita_cache}"
+            return pd.read_csv(url_raw, on_bad_lines='skip')
+        except:
+            return pd.DataFrame()
+
+def guardar_registro_manual(nueva_fila_df, nombre_archivo, timestamp_cache):
+    """Guarda el nuevo registro manual. Soporta escritura local y remota vía API de GitHub"""
+    # Intentar guardado por API de GitHub si el Token está configurado (Esencial para Streamlit Cloud)
+    if GITHUB_TOKEN:
+        url_api = f"https://api.github.com/repos/{USER}/{REPO}/contents/{nombre_archivo}"
+        headers_json = {
+            "Authorization": f"token {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github.v3+json"
         }
         
-        # Realizamos las descargas explícitas
-        res_usuarios = requests.get(url_u, headers=headers)
-        res_actividad = requests.get(url_a, headers=headers)
+        res = requests.get(url_api, headers=headers_json)
+        sha = None
+        df_existente = pd.DataFrame()
         
-        # Si la API responde OK, procesamos los datos
-        if res_usuarios.status_code == 200 and res_actividad.status_code == 200:
-            from io import StringIO
-            df_usuarios = pd.read_csv(StringIO(res_usuarios.text), on_bad_lines='skip')
-            # 'on_bad_lines=skip' ignora filas rotas por saltos de línea accidentales en el CSV
-            df_actividad = pd.read_csv(StringIO(res_actividad.text), on_bad_lines='skip')
-        else:
-            raise Exception(f"GitHub API respondió con código {res_actividad.status_code}")
+        if res.status_code == 200:
+            datos_archivo = res.json()
+            sha = datos_archivo['sha']
+            contenido_crudo = base64.b64decode(datos_archivo['content']).decode('utf-8')
+            df_existente = pd.read_csv(StringIO(contenido_crudo), on_bad_lines='skip')
         
-        # Convertir fecha a datetime manejando errores de líneas rotas de forma segura
-        df_actividad['fecha_hora'] = pd.to_datetime(df_actividad['fecha_hora'], errors='coerce')
-        df_actividad = df_actividad.dropna(subset=['fecha_hora']) # Elimina registros inválidos
+        df_total = pd.concat([df_existente, nueva_fila_df], ignore_index=True)
+        csv_string = df_total.to_csv(index=False)
+        contenido_base64 = base64.b64encode(csv_string.encode('utf-8')).decode('utf-8')
         
-        # Cruzar los datos para tener los nombres reales
-        df_master = pd.merge(df_actividad, df_usuarios, left_on='usuario', right_on='usuarios', how='left')
-        df_master['nombre'] = df_master['nombre'].fillna(df_master['usuario'])
-        
-        # Aseguramos que la columna 'cliente' exista y transformamos todo a texto plano antes del filter
-        if 'cliente' in df_master.columns:
-            df_master['cliente'] = df_master['cliente'].fillna('No especificado').astype(str).str.strip()
-            df_master['cliente'] = df_master['cliente'].replace(['', 'nan', 'N/A', 'None'], 'No especificado')
-        else:
-            df_master['cliente'] = 'No especificado'
-        
-        return df_master
-        
-    except Exception as e:
-        # PLAN B: Canal de respaldo por URL RAW si la API se satura
-        st.sidebar.info("🔄 Usando canal alternativo de datos...")
+        payload = {
+            "message": f"🤖 Registro personalizado de campo - {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+            "content": contenido_base64,
+            "branch": BRANCH
+        }
+        if sha:
+            payload["sha"] = sha
+            
+        res_put = requests.put(url_api, headers=headers_json, data=json.dumps(payload))
+        return res_put.status_code in [200, 201]
+    else:
+        # Modo de contingencia Local (si estás corriendo el script directo en tu PC)
         try:
-            url_raw_u = f"https://raw.githubusercontent.com/{USER}/{REPO}/{BRANCH}/usuarios_permitidos.csv?nocache={timestamp_evita_cache}"
-            url_raw_a = f"https://raw.githubusercontent.com/{USER}/{REPO}/{BRANCH}/registro_actividad.csv?nocache={timestamp_evita_cache}"
+            df_existente = pd.read_csv(nombre_archivo, on_bad_lines='skip')
+        except:
+            df_existente = pd.DataFrame(columns=nueva_fila_df.columns)
             
-            df_usuarios = pd.read_csv(url_raw_u, on_bad_lines='skip')
-            df_actividad = pd.read_csv(url_raw_a, on_bad_lines='skip')
-            
-            df_actividad['fecha_hora'] = pd.to_datetime(df_actividad['fecha_hora'], errors='coerce')
-            df_actividad = df_actividad.dropna(subset=['fecha_hora'])
-            
-            df_master = pd.merge(df_actividad, df_usuarios, left_on='usuario', right_on='usuarios', how='left')
-            df_master['nombre'] = df_master['nombre'].fillna(df_master['usuario'])
-            
-            if 'cliente' in df_master.columns:
-                df_master['cliente'] = df_master['cliente'].fillna('No especificado').astype(str).str.strip()
-                df_master['cliente'] = df_master['cliente'].replace(['', 'nan', 'N/A', 'None'], 'No especificado')
-            else:
-                df_master['cliente'] = 'No especificado'
-                
-            return df_master
-        except Exception as error_raw:
-            st.error(f"Error crítico en la lectura de bases de datos: {e}")
-            return None
+        df_total = pd.concat([df_existente, nueva_fila_df], ignore_index=True)
+        df_total.to_csv(nombre_archivo, index=False)
+        return True
 
+# Control de tiempo para evitar caché persistente en actualizaciones
+reloader = int(time.time() / 60)
 
-# 2. Control de datos y botón en la barra lateral
-st.sidebar.header("🔄 Control de Datos")
+# Carga de catálogos e información estructural
+df_usuarios = cargar_datos_csv("usuarios_permitidos.csv", reloader)
+df_orgs = cargar_datos_csv("Orgs CONCI.csv", reloader)
 
-# Botón para limpiar el caché manualmente
-if st.sidebar.button("🔄 Actualizar Datos Ahora", use_container_width=True):
-    st.cache_data.clear()  # Borra el caché de Streamlit
-    st.rerun()             # Fuerza el recargo inmediato
+# --- CONFIGURACIÓN DE PESTAÑAS ---
+tab1, tab2 = st.tabs(["📝 Registro Personalizado", "📊 Tablero de Control y Seguimiento"])
 
-# Le pasamos el tiempo actual truncado al minuto como argumento para manejar la actualización de red
-df = cargar_datos(int(time.time() / 60))
-
-if df is not None:
-    # 3. Filtros Laterales (Sidebar)
-    st.sidebar.markdown("---")
-    st.sidebar.header("Filtros de Análisis")
+# ==========================================
+# PESTAÑA 1: REGISTRO MANUAL DE CAMPO
+# ==========================================
+with tab1:
+    st.header("📝 Ingreso de Registros Personalizados")
+    st.markdown("Asentá las actividades, ensayos y visitas presenciales que realizás con las cuentas de forma externa a los reportes automáticos.")
     
-    # Filtro de Fecha
-    min_fecha = df['fecha_hora'].min().date()
-    max_fecha = df['fecha_hora'].max().date()
-    f_inicio, f_final = st.sidebar.date_input("Rango de fechas", [min_fecha, max_fecha], min_value=min_fecha, max_value=max_fecha)
-    
-    # Filtro de Usuarios
-    usuarios_disponibles = sorted(df['nombre'].unique())
-    usuarios_seleccionados = st.sidebar.multiselect("Seleccionar Colaboradores", usuarios_disponibles, default=usuarios_disponibles)
-    
-    # NUEVO FILTRO: Selección de Clientes
-    clientes_disponibles = sorted(df['cliente'].unique())
-    clientes_seleccionados = st.sidebar.multiselect("Seleccionar Clientes", clientes_disponibles, default=clientes_disponibles)
-    
-    # Filtrar el dataframe principal aplicando el filtro de usuarios, fechas y clientes
-    df_filtrado = df[
-        (df['fecha_hora'].dt.date >= f_inicio) & 
-        (df['fecha_hora'].dt.date <= f_final) & 
-        (df['nombre'].isin(usuarios_seleccionados)) &
-        (df['cliente'].isin(clientes_seleccionados))
-    ]
-
-    # 4. Métricas Principales (KPIs)
-    total_acciones = len(df_filtrado)
-    usuarios_activos = df_filtrado['nombre'].nunique()
-    # Buscamos de forma general cualquier interacción de exportación
-    exportaciones = len(df_filtrado[df_filtrado['accion'].str.contains('Exportó|PDF', na=False, case=False)])
-    
-    kpi1, kpi2, kpi3 = st.columns(3)
-    kpi1.metric("Total Interacciones", f"{total_acciones}")
-    kpi2.metric("Colaboradores Activos", f"{usuarios_activos}")
-    kpi3.metric("Reportes Generados (PDF)", f"{exportaciones}")
-    
-    st.markdown("---")
-    
-    # 5. Visualizaciones y Gráficos Generales
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader("📌 Actividad por Colaborador")
-        actividad_usuario = df_filtrado['nombre'].value_counts().reset_index()
-        actividad_usuario.columns = ['Colaborador', 'Cantidad de Acciones']
+    # Preparar listas desplegables seguras basadas en tus CSVs
+    if not df_orgs.empty and 'Organización' in df_orgs.columns:
+        lista_clientes = sorted(df_orgs['Organización'].dropna().unique().tolist())
+    else:
+        lista_clientes = ["ADJ SRL", "DE GIORGIO SA", "H&H Outfitters SA", "Schiaroli Horacio Ramon"]
         
-        fig_bar = px.bar(
-            actividad_usuario, 
-            x='Cantidad de Acciones', 
-            y='Colaborador', 
-            orientation='h',
-            color='Cantidad de Acciones',
-            color_continuous_scale='Blugrn',
-            template='plotly_white'
-        )
-        fig_bar.update_layout(yaxis={'categoryorder':'total ascending'})
-        st.plotly_chart(fig_bar, use_container_width=True)
-
-    with col2:
-        st.subheader("⚙️ Tipos de Acciones Más Frecuentes")
-        acciones_count = df_filtrado['accion'].value_counts().reset_index()
-        acciones_count.columns = ['Acción', 'Frecuencia']
-        
-        fig_pie = px.pie(
-            acciones_count, 
-            values='Frecuencia', 
-            names='Acción', 
-            hole=0.4,
-            template='plotly_white'
-        )
-        st.plotly_chart(fig_pie, use_container_width=True)
+    if not df_usuarios.empty and 'usuarios' in df_usuarios.columns:
+        lista_usuarios_x = sorted(df_usuarios['usuarios'].dropna().unique().tolist())
+    else:
+        lista_usuarios_x = ["X225841", "X090165", "X635152"]
 
     st.markdown("---")
     
-    # 6. Evolución Temporal
-    st.subheader("📈 Evolución de Accesos en el Tiempo")
-    df_filtrado['fecha'] = df_filtrado['fecha_hora'].dt.date
-    evolucion = df_filtrado.groupby('fecha').size().reset_index(name='Cantidad')
-    
-    fig_line = px.line(
-        evolucion, 
-        x='fecha', 
-        y='Cantidad', 
-        markers=True,
-        line_shape='spline',
-        template='plotly_white'
-    )
-    st.plotly_chart(fig_line, use_container_width=True)
-
-    # 7. Sección de Clasificación de Reportes Exportados
-    st.markdown("---")
-    st.subheader("📋 Análisis de Reportes Exportados por Tipo")
-    
-    df_exportaciones = df_filtrado[df_filtrado['accion'].str.contains('Exportó|PDF', na=False, case=False)].copy()
-    
-    if not df_exportaciones.empty:
-        def clasificar_reporte(accion):
-            accion_lower = str(accion).lower()
-            if 'checklist' in accion_lower:
-                return 'Checklist'
-            elif 'cierre' in accion_lower:
-                return 'Cierre Cosecha'
-            elif 'auditoría' in accion_lower:
-                return 'Auditoría Cosecha'
-            else:
-                return 'General / Otros'
+    with st.form("formulario_registro_manual", clear_on_submit=True):
+        col_f1, col_f2 = st.columns(2)
         
-        df_exportaciones['Tipo de Reporte'] = df_exportaciones['accion'].apply(clasificar_reporte)
-        
-        reportes_tipo = df_exportaciones.groupby('Tipo de Reporte').size().reset_index(name='Cantidad Exportada')
-        reportes_tipo = reportes_tipo.sort_values(by='Cantidad Exportada', ascending=False)
-        
-        col_tabla, col_grafico = st.columns([2, 3])
-        
-        with col_tabla:
-            st.markdown("#### 🔢 Resumen en Tabla")
-            st.dataframe(
-                reportes_tipo, 
-                use_container_width=True, 
-                hide_index=True
+        with col_f1:
+            fecha_sel = st.date_input("Fecha de la Actividad", datetime.now().date())
+            cliente_sel = st.selectbox("Razón Social del Cliente (Catálogo Conci)", lista_clientes)
+            usuario_sel = st.selectbox("Identificador del Colaborador (Usuario X)", lista_usuarios_x)
+            
+        with col_f2:
+            tipo_registro_sel = st.selectbox(
+                "Tipo de Registro / Actividad",
+                ["Visita / Ensayo AA", "Reporte 360", "Reporte personalizado", "Reunión / Capacitación individual"]
             )
-            top_reporte = reportes_tipo.iloc[0]['Tipo de Reporte']
-            st.success(f"💡 El reporte más solicitado es: **{top_reporte}**")
+            observaciones_sel = st.text_area("Observaciones del Registro", placeholder="Escribí los detalles del acuerdo, novedades de la visita o estado de la máquina...")
             
-        with col_grafico:
-            st.markdown("#### 📊 Distribución Visual")
-            fig_reportes = px.bar(
-                reportes_tipo,
-                x='Cantidad Exportada',
-                y='Tipo de Reporte',
+        st.markdown(" ")
+        boton_guardar = st.form_submit_button("💾 Guardar Registro de Actividad", use_container_width=True)
+        
+        if boton_guardar:
+            # Construir el DataFrame con la estructura idéntica de tu registro_personalizado.csv
+            nueva_actividad = pd.DataFrame([{
+                "fecha": fecha_sel.strftime("%d/%m/%Y"),
+                "razon_social": cliente_sel,
+                "usuario_x": usuario_sel,
+                "registro": tipo_registro_sel,
+                "tiempo": 1.0, # Unidad de medida estándar por defecto
+                "observaciones": observaciones_sel if observaciones_sel else "Sin observaciones"
+            }])
+            
+            with st.spinner("Guardando información en la base de datos centralizada..."):
+                if guardar_registro_manual(nueva_actividad, "registro_personalizado.csv", reloader):
+                    st.success("🎉 ¡Registro almacenado correctamente! Podés visualizarlo ingresando a la pestaña del Tablero.")
+                    st.cache_data.clear() # Limpieza de caché obligatoria para forzar lectura de los nuevos datos
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("Hubo un problema al procesar el archivo. Verificá los accesos a tu repositorio.")
+
+# ==========================================
+# PESTAÑA 2: TABLERO DE CONTROL UNIFICADO
+# ==========================================
+with tab2:
+    # Controles de datos globales en la barra lateral
+    st.sidebar.header("🔄 Control de Datos")
+    if st.sidebar.button("🔄 Actualizar Datos Ahora", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+
+    # Carga de las dos fuentes primarias de información
+    df_auto_crudo = cargar_datos_csv("registro_actividad.csv", reloader)
+    df_manual_crudo = cargar_datos_csv("registro_personalizado.csv", reloader)
+
+    if not df_auto_crudo.empty and not df_usuarios.empty:
+        # --- PROCESAMIENTO CANAL AUTOMÁTICO ---
+        df_auto_crudo['fecha_hora'] = pd.to_datetime(df_auto_crudo['fecha_hora'], errors='coerce')
+        df_auto_crudo = df_auto_crudo.dropna(subset=['fecha_hora'])
+        
+        df_auto_m = pd.merge(df_auto_crudo, df_usuarios, left_on='usuario', right_on='usuarios', how='left')
+        df_auto_m['nombre'] = df_auto_m['nombre'].fillna(df_auto_m['usuario'])
+        
+        if 'cliente' in df_auto_m.columns:
+            df_auto_m['cliente'] = df_auto_m['cliente'].astype(str).str.strip().replace(['', 'nan', 'N/A', 'None'], 'No especificado')
+        else:
+            df_auto_m['cliente'] = 'No especificado'
+            
+        df_auto_m['Origen'] = 'Automático (Uso de Apps)'
+        df_auto_unificado = df_auto_m[['fecha_hora', 'nombre', 'accion', 'cliente', 'Origen']].copy()
+        
+        # --- PROCESAMIENTO CANAL MANUAL (REGISTROS PERSONALIZADOS) ---
+        if not df_manual_crudo.empty:
+            df_manual_crudo['fecha_hora'] = pd.to_datetime(df_manual_crudo['fecha'], format="%d/%m/%Y", errors='coerce')
+            df_manual_crudo = df_manual_crudo.dropna(subset=['fecha_hora'])
+            
+            df_manual_m = pd.merge(df_manual_crudo, df_usuarios, left_on='usuario_x', right_on='usuarios', how='left')
+            df_manual_m['nombre'] = df_manual_m['nombre'].fillna(df_manual_m['usuario_x'])
+            
+            df_manual_m = df_manual_m.rename(columns={
+                'registro': 'accion',
+                'razon_social': 'cliente'
+            })
+            df_manual_m['cliente'] = df_manual_m['cliente'].astype(str).str.strip().replace(['', 'nan', 'N/A', 'None'], 'No especificado')
+            df_manual_m['Origen'] = 'Manual (Registros Campo)'
+            
+            df_manual_unificado = df_manual_m[['fecha_hora', 'nombre', 'accion', 'cliente', 'Origen']].copy()
+            
+            # UNIFICACIÓN ABSOLUTA: Combinar ambas fuentes en una sola variable 'df'
+            df = pd.concat([df_auto_unificado, df_manual_unificado], ignore_index=True)
+        else:
+            df = df_auto_unificado
+
+        # --- FILTROS DE LA SEGUNDA PESTAÑA ---
+        st.sidebar.markdown("---")
+        st.sidebar.header("Filtros de Análisis")
+        
+        min_fecha = df['fecha_hora'].min().date()
+        max_fecha = df['fecha_hora'].max().date()
+        f_inicio, f_final = st.sidebar.date_input("Rango de fechas", [min_fecha, max_fecha], min_value=min_fecha, max_value=max_fecha)
+        
+        usuarios_disponibles = sorted(df['nombre'].unique())
+        usuarios_seleccionados = st.sidebar.multiselect("Seleccionar Colaboradores", usuarios_disponibles, default=usuarios_disponibles)
+        
+        clientes_disponibles = sorted(df['cliente'].unique())
+        clientes_seleccionados = st.sidebar.multiselect("Seleccionar Clientes", clientes_disponibles, default=clientes_disponibles)
+        
+        origenes_disponibles = sorted(df['Origen'].unique())
+        origenes_seleccionados = st.sidebar.multiselect("Origen de la Actividad", origenes_disponibles, default=origenes_disponibles)
+
+        # Filtrado del dataframe combinado
+        df_filtrado = df[
+            (df['fecha_hora'].dt.date >= f_inicio) & 
+            (df['fecha_hora'].dt.date <= f_final) & 
+            (df['nombre'].isin(usuarios_seleccionados)) &
+            (df['cliente'].isin(clientes_seleccionados)) &
+            (df['Origen'].isin(origenes_seleccionados))
+        ]
+
+        # 4. Métricas Principales (KPIs)
+        total_acciones = len(df_filtrado)
+        usuarios_activos = df_filtrado['nombre'].nunique()
+        exportaciones = len(df_filtrado[df_filtrado['accion'].str.contains('Exportó|PDF|Reporte|Visita|Reunión', na=False, case=False)])
+        
+        kpi1, kpi2, kpi3 = st.columns(3)
+        kpi1.metric("Total Interacciones", f"{total_acciones}")
+        kpi2.metric("Colaboradores Activos", f"{usuarios_activos}")
+        kpi3.metric("Entregas y Gestiones Realizadas", f"{exportaciones}")
+        
+        st.markdown("---")
+        
+        # 5. Visualizaciones y Gráficos Generales
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("📌 Actividad por Colaborador")
+            actividad_usuario = df_filtrado['nombre'].value_counts().reset_index()
+            actividad_usuario.columns = ['Colaborador', 'Cantidad de Acciones']
+            
+            fig_bar = px.bar(
+                actividad_usuario, 
+                x='Cantidad de Acciones', 
+                y='Colaborador', 
                 orientation='h',
-                color='Tipo de Reporte',
-                color_discrete_sequence=px.colors.qualitative.Prism,
+                color='Cantidad de Acciones',
+                color_continuous_scale='Blugrn',
                 template='plotly_white'
             )
-            fig_reportes.update_layout(
-                showlegend=False,
-                xaxis_title="Cantidad de PDFs Generados",
-                yaxis_title="",
-                yaxis={'categoryorder':'total ascending'}
-            )
-            st.plotly_chart(fig_reportes, use_container_width=True)
-            
-    else:
-        st.info("No se registraron exportaciones de reportes en el rango de fechas o clientes seleccionados.")
-    
-    # 8. Tabla de datos crudos filtrada (Al final para un mejor cierre visual)
-    st.markdown("---")
-    st.subheader("🔍 Historial de Actividad Reciente")
-    
-    columnas_mostrar = ['fecha_hora', 'nombre', 'accion', 'cliente']
-    df_mostrar = df_filtrado[columnas_mostrar].sort_values(by='fecha_hora', ascending=False).copy()
-    df_mostrar['fecha_hora'] = df_mostrar['fecha_hora'].dt.strftime('%d/%m/%Y %H:%M:%S')
-    
-    st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
+            fig_bar.update_layout(yaxis={'categoryorder':'total ascending'})
+            st.plotly_chart(fig_bar, use_container_width=True)
 
-else:
-    st.warning("Asegurate de que las bases de datos estén cargadas en la rama 'main' de tu repositorio público.")
+        with col2:
+            st.subheader("⚙️ Segmentación por Origen de Datos")
+            origen_count = df_filtrado['Origen'].value_counts().reset_index()
+            origen_count.columns = ['Origen', 'Frecuencia']
+            
+            fig_pie = px.pie(
+                origen_count, 
+                values='Frecuencia', 
+                names='Origen', 
+                hole=0.4,
+                color_discrete_sequence=['#2ca02c', '#1f77b4'],
+                template='plotly_white'
+            )
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+        st.markdown("---")
+        
+        # 6. Evolución Temporal Combinada
+        st.subheader("📈 Evolución de Gestiones en el Tiempo")
+        df_filtrado['fecha'] = df_filtrado['fecha_hora'].dt.date
+        evolucion = df_filtrado.groupby(['fecha', 'Origen']).size().reset_index(name='Cantidad')
+        
+        fig_line = px.line(
+            evolucion, 
+            x='fecha', 
+            y='Cantidad', 
+            color='Origen',
+            markers=True,
+            line_shape='spline',
+            color_discrete_map={'Manual (Registros Campo)': '#2ca02c', 'Automático (Uso de Apps)': '#1f77b4'},
+            template='plotly_white'
+        )
+        st.plotly_chart(fig_line, use_container_width=True)
+
+        # 7. Sección de Clasificación de Reportes y Tareas de Campo
+        st.markdown("---")
+        st.subheader("📋 Análisis de Reportes y Tareas de Campo por Tipo")
+        
+        df_exportaciones = df_filtrado[df_filtrado['accion'].str.contains('Exportó|PDF|Reporte|Visita|Reunión|Capacitación', na=False, case=False)].copy()
+        
+        if not df_exportaciones.empty:
+            def clasificar_reporte(accion):
+                accion_lower = str(accion).lower()
+                if 'checklist' in accion_lower: return 'Checklist'
+                elif 'cierre' in accion_lower: return 'Cierre Cosecha'
+                elif 'auditoría' in accion_lower: return 'Auditoría Cosecha'
+                elif 'visita' in accion_lower or 'ensayo' in accion_lower: return 'Visita / Ensayo AA'
+                elif '360' in accion_lower: return 'Reporte 360'
+                elif 'capacitación' in accion_lower or 'reunión' in accion_lower: return 'Capacitación / Reunión'
+                else: return 'General / Otros'
+            
+            df_exportaciones['Tipo de Tarea'] = df_exportaciones['accion'].apply(clasificar_reporte)
+            reportes_tipo = df_exportaciones.groupby(['Tipo de Tarea', 'Origen']).size().reset_index(name='Cantidad')
+            reportes_tipo = reportes_tipo.sort_values(by='Cantidad', ascending=False)
+            
+            col_tabla, col_grafico = st.columns([2, 3])
+            
+            with col_tabla:
+                st.markdown("#### 🔢 Resumen en Tabla")
+                st.dataframe(reportes_tipo, use_container_width=True, hide_index=True)
+                if not reportes_tipo.empty:
+                    top_reporte = reportes_tipo.iloc[0]['Tipo de Tarea']
+                    st.success(f"💡 La tarea dominante actual es: **{top_reporte}**")
+                
+            with col_grafico:
+                st.markdown("#### 📊 Distribución Visual Unificada")
+                fig_reportes = px.bar(
+                    reportes_tipo,
+                    x='Cantidad',
+                    y='Tipo de Tarea',
+                    color='Origen',
+                    orientation='h',
+                    barmode='stack',
+                    color_discrete_map={'Manual (Registros Campo)': '#2ca02c', 'Automático (Uso de Apps)': '#1f77b4'},
+                    template='plotly_white'
+                )
+                fig_reportes.update_layout(yaxis={'categoryorder':'total ascending'})
+                st.plotly_chart(fig_reportes, use_container_width=True)
+                
+        else:
+            st.info("No se registraron tareas ni exportaciones en los filtros seleccionados.")
+        
+        # 8. Tabla de datos unificada final
+        st.markdown("---")
+        st.subheader("🔍 Historial Unificado de Actividad Reciente")
+        
+        columnas_mostrar = ['fecha_hora', 'nombre', 'accion', 'cliente', 'Origen']
+        df_mostrar = df_filtrado[columnas_mostrar].sort_values(by='fecha_hora', ascending=False).copy()
+        df_mostrar['fecha_hora'] = df_mostrar['fecha_hora'].dt.strftime('%d/%m/%Y %H:%M:%S')
+        
+        st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
+
+    else:
+        st.warning("Asegurate de que las bases de datos estén cargadas en la rama 'main' de tu repositorio público.")
