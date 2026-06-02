@@ -24,58 +24,62 @@ def cargar_datos(timestamp_evita_cache):
         
         headers = {
             "User-Agent": "Streamlit-App",
-            "Accept": "application/vnd.github.v3.raw",  # Esto le exige el texto plano a GitHub
+            "Accept": "application/vnd.github.v3.raw",
             "Cache-Control": "no-cache"
         }
         
-        # Realizamos las descargas explícitas del texto usando requests
+        # Realizamos las descargas explícitas
         res_usuarios = requests.get(url_u, headers=headers)
         res_actividad = requests.get(url_a, headers=headers)
         
-        # Si la API responde OK (Código 200), leemos el contenido de texto directo
+        # Si la API responde OK, procesamos los datos
         if res_usuarios.status_code == 200 and res_actividad.status_code == 200:
             from io import StringIO
             df_usuarios = pd.read_csv(StringIO(res_usuarios.text))
             df_actividad = pd.read_csv(StringIO(res_actividad.text))
         else:
-            # Si hay algún problema con la cuota de la API, forzamos un error para ir al Plan B
-            raise Exception("No se pudo obtener data limpia de la API")
+            # Si da error 403 (Rate Limit) u otro, lanzamos excepción para ir al Plan B
+            raise Exception(f"GitHub API respondió con código {res_actividad.status_code} (Posible límite de consultas alcanzado)")
         
         # Convertir fecha a datetime
         df_actividad['fecha_hora'] = pd.to_datetime(df_actividad['fecha_hora'])
         
-        # Cruzar los datos para tener los nombres reales de los colaboradores 
+        # Cruzar los datos para tener los nombres reales
         df_master = pd.merge(df_actividad, df_usuarios, left_on='usuario', right_on='usuarios', how='left')
         df_master['nombre'] = df_master['nombre'].fillna(df_master['usuario'])
         
-        # Limpieza de la columna cliente para evitar problemas con valores nulos o vacíos
+        # Limpieza de la columna cliente ultra-segura
         if 'cliente' in df_master.columns:
-            df_master['cliente'] = df_master['cliente'].fillna('No especificado').strip()
-            df_master['cliente'] = df_master['cliente'].replace(['', 'nan', 'N/A'], 'No especificado')
+            df_master['cliente'] = df_master['cliente'].astype(str).str.strip()
+            df_master['cliente'] = df_master['cliente'].replace(['', 'nan', 'N/A', 'None'], 'No especificado')
         else:
             df_master['cliente'] = 'No especificado'
         
         return df_master
         
     except Exception as e:
-        # PLAN B: Si la API llega a fallar, cae acá y usa el método tradicional con el truco anti-cache
+        # PLAN B: Si la API se saturó, intentamos descargar de forma tradicional por URL RAW con el timestamp
+        st.sidebar.info("🔄 Usando canal alternativo de datos por alta demanda...")
         try:
             url_raw_u = f"https://raw.githubusercontent.com/{USER}/{REPO}/{BRANCH}/usuarios_permitidos.csv?nocache={timestamp_evita_cache}"
             url_raw_a = f"https://raw.githubusercontent.com/{USER}/{REPO}/{BRANCH}/registro_actividad.csv?nocache={timestamp_evita_cache}"
+            
             df_usuarios = pd.read_csv(url_raw_u)
             df_actividad = pd.read_csv(url_raw_a)
+            
             df_actividad['fecha_hora'] = pd.to_datetime(df_actividad['fecha_hora'])
             df_master = pd.merge(df_actividad, df_usuarios, left_on='usuario', right_on='usuarios', how='left')
             df_master['nombre'] = df_master['nombre'].fillna(df_master['usuario'])
             
             if 'cliente' in df_master.columns:
-                df_master['cliente'] = df_master['cliente'].fillna('No especificado').strip()
-                df_master['cliente'] = df_master['cliente'].replace(['', 'nan', 'N/A'], 'No especificado')
+                df_master['cliente'] = df_master['cliente'].astype(str).str.strip()
+                df_master['cliente'] = df_master['cliente'].replace(['', 'nan', 'N/A', 'None'], 'No especificado')
             else:
                 df_master['cliente'] = 'No especificado'
                 
             return df_master
-        except:
+        except Exception as error_raw:
+            st.error(f"Error crítico en ambos canales de datos. Motivo original: {e}")
             return None
 
 # 2. Control de datos y botón en la barra lateral
