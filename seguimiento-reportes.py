@@ -48,6 +48,13 @@ def cargar_datos(timestamp_evita_cache):
         df_master = pd.merge(df_actividad, df_usuarios, left_on='usuario', right_on='usuarios', how='left')
         df_master['nombre'] = df_master['nombre'].fillna(df_master['usuario'])
         
+        # Limpieza de la columna cliente para evitar problemas con valores nulos o vacíos
+        if 'cliente' in df_master.columns:
+            df_master['cliente'] = df_master['cliente'].fillna('No especificado').strip()
+            df_master['cliente'] = df_master['cliente'].replace(['', 'nan', 'N/A'], 'No especificado')
+        else:
+            df_master['cliente'] = 'No especificado'
+        
         return df_master
         
     except Exception as e:
@@ -60,6 +67,13 @@ def cargar_datos(timestamp_evita_cache):
             df_actividad['fecha_hora'] = pd.to_datetime(df_actividad['fecha_hora'])
             df_master = pd.merge(df_actividad, df_usuarios, left_on='usuario', right_on='usuarios', how='left')
             df_master['nombre'] = df_master['nombre'].fillna(df_master['usuario'])
+            
+            if 'cliente' in df_master.columns:
+                df_master['cliente'] = df_master['cliente'].fillna('No especificado').strip()
+                df_master['cliente'] = df_master['cliente'].replace(['', 'nan', 'N/A'], 'No especificado')
+            else:
+                df_master['cliente'] = 'No especificado'
+                
             return df_master
         except:
             return None
@@ -89,11 +103,16 @@ if df is not None:
     usuarios_disponibles = sorted(df['nombre'].unique())
     usuarios_seleccionados = st.sidebar.multiselect("Seleccionar Colaboradores", usuarios_disponibles, default=usuarios_disponibles)
     
-    # Filtrar el dataframe principal
+    # NUEVO FILTRO: Selección de Clientes
+    clientes_disponibles = sorted(df['cliente'].unique())
+    clientes_seleccionados = st.sidebar.multiselect("Seleccionar Clientes", clientes_disponibles, default=clientes_disponibles)
+    
+    # Filtrar el dataframe principal aplicando el filtro de usuarios, fechas y clientes
     df_filtrado = df[
         (df['fecha_hora'].dt.date >= f_inicio) & 
         (df['fecha_hora'].dt.date <= f_final) & 
-        (df['nombre'].isin(usuarios_seleccionados))
+        (df['nombre'].isin(usuarios_seleccionados)) &
+        (df['cliente'].isin(clientes_seleccionados))
     ]
 
     # 4. Métricas Principales (KPIs)
@@ -215,17 +234,13 @@ if df is not None:
             st.plotly_chart(fig_reportes, use_container_width=True)
             
     else:
-        st.info("No se registraron exportaciones de reportes en el rango de fechas seleccionado.")
+        st.info("No se registraron exportaciones de reportes en el rango de fechas o clientes seleccionados.")
     
     # 8. Tabla de datos crudos filtrada (Al final para un mejor cierre visual)
     st.markdown("---")
     st.subheader("🔍 Historial de Actividad Reciente")
     
-    # Protegemos el render en caso de que la columna 'cliente' no venga en alguna fila
-    columnas_mostrar = ['fecha_hora', 'nombre', 'accion']
-    if 'cliente' in df_filtrado.columns:
-        columnas_mostrar.append('cliente')
-        
+    columnas_mostrar = ['fecha_hora', 'nombre', 'accion', 'cliente']
     df_mostrar = df_filtrado[columnas_mostrar].sort_values(by='fecha_hora', ascending=False).copy()
     df_mostrar['fecha_hora'] = df_mostrar['fecha_hora'].dt.strftime('%d/%m/%Y %H:%M:%S')
     
