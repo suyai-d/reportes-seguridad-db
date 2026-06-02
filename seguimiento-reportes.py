@@ -171,8 +171,10 @@ if df is not None:
             accion_lower = str(accion).lower()
             if 'checklist' in accion_lower:
                 return 'Checklist'
-            elif 'cosecha' in accion_lower:
-                return 'Reporte Cosecha'
+            elif 'cierre' in accion_lower:
+                return 'Cierre Cosecha'
+            elif 'auditoría' in accion_lower:
+                return 'Auditoría Cosecha'
             else:
                 return 'General / Otros'
         
