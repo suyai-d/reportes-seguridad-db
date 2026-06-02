@@ -29,4 +29,5 @@ fecha_hora,usuario,accion,cliente
 2026-06-01 19:57:53,X225841,Ingreso al Auditoria Cosecha,
 2026-06-01 20:03:02,X225841,Exportó Auditoría de Cosecha a PDF,ADJ SRL
 2026-06-02 11:47:10,X225841,Ingreso al Cierre de Cosecha,
-2026-06-02 12:12:23,X225841,Ingreso al Cierre de Cosecha,N/A
+2026-06-02 12:12:23,X225841,Ingreso al Cierre de Cosecha,
+2026-06-02 12:14:55,X225841,Exportó Reporte Cierre Cosecha a PDF,ACTIS SRL
