@@ -22,6 +22,32 @@ BRANCH = "main"
 # Verificar si existe un Token en los secretos para poder escribir en GitHub de forma remota
 GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", None)
 
+# =========================================================================
+# CONFIGURACIÓN DE LA BIBLIOTECA DE REPORTES (Editá estos links y textos)
+# =========================================================================
+REPORTES_CONFIG = {
+    "Reporte 1: Checklist PreCampaña": {
+        "url_reporte": "https://checklist-conci.streamlit.app/",
+        "url_instructivo": "https://docs.google.com/document/d/1YO4QwYocbQiwgu5BqtRmDQP9QHs_N5WyNzQETPNuXQY/edit?usp=drive_link",
+        "descripcion": "Herramienta digital para realizar la revisión técnica previa a la entrega o servicio de cosechadoras y tractores. Permite registrar estados de componentes y de los paquetes de monitoreo."
+    },
+    "Reporte 2: Cierre de Campaña - Cosecha": {
+        "url_reporte": "https://cierre-campana.streamlit.app/",
+        "url_instructivo": "https://docs.google.com/document/d/10k_Ry4cWwkWkI-dcO5Y2vT_Ngl7ulgMBhkuZQRrK8_0/edit?usp=drive_link",
+        "descripcion": "Análisis agronómico y de eficiencia operativa al finalizar la campaña. Consolida datos de rendimiento, consumo de combustible, utilización de la tecnología, estado de digitalización de la cuenta del Operations Center, hectáreas trabajadas y datos agronómicos."
+    },
+    "Reporte 3: Auditoría de Cosecha (S7 y S700)": {
+        "url_reporte": "https://reporte-cosecha-conci.streamlit.app/",
+        "url_instructivo": "https://docs.google.com/document/d/1tOckqUFse387MXeRyydbAWcFTOq1Bet2bX9WM_ZznNw/edit?usp=drive_link",
+        "descripcion": "Evaluación de configuración y automatización en cosechadoras de la serie S7 y S700. Pensado para validar el correcto aprovechamiento de tecnologías de velocidad y ajustes y su impacto monetario."
+    },
+    "Reporte 4: SmartFarm": {
+        "url_reporte": "https://smartfarm-conci.streamlit.app/",
+        "url_instructivo": "-",
+        "descripcion": "Dashboard integral multivariable para el seguimiento de las cuentas SmartFarm y los proyectos de Agronomy Analyzer."
+    }
+}
+
 # --- FUNCIONES DE CARGA Y ESCRITURA ---
 
 @st.cache_data(ttl=600)
@@ -61,7 +87,6 @@ def guardar_registro_manual(nueva_fila_df, nombre_archivo):
         "Accept": "application/vnd.github.v3+json"
     }
     
-    # 1. Obtener el archivo actual y su SHA obligatorio para poder hacer el update
     res = requests.get(url_api, headers=headers_json)
     sha = None
     df_existente = pd.DataFrame()
@@ -75,12 +100,10 @@ def guardar_registro_manual(nueva_fila_df, nombre_archivo):
         st.error(f"Error al conectar con la API de GitHub: Código {res.status_code}")
         return False
     
-    # 2. Concatenar la nueva fila respetando el formato original
     df_total = pd.concat([df_existente, nueva_fila_df], ignore_index=True)
     csv_string = df_total.to_csv(index=False)
     contenido_base64 = base64.b64encode(csv_string.encode('utf-8')).decode('utf-8')
     
-    # 3. Armar el Push/Commit hacia GitHub
     payload = {
         "message": f"🤖 Registro manual de campo - {datetime.now().strftime('%d/%m/%Y %H:%M')}",
         "content": contenido_base64,
@@ -90,12 +113,7 @@ def guardar_registro_manual(nueva_fila_df, nombre_archivo):
         payload["sha"] = sha
         
     res_put = requests.put(url_api, headers=headers_json, data=json.dumps(payload))
-    
-    if res_put.status_code in [200, 201]:
-        return True
-    else:
-        st.error(f"GitHub rechazó la actualización. Respuesta: {res_put.text}")
-        return False
+    return res_put.status_code in [200, 201]
 
 # Control de tiempo para refresco de red
 reloader = int(time.time() / 60)
@@ -104,8 +122,12 @@ reloader = int(time.time() / 60)
 df_usuarios = cargar_datos_csv("usuarios_permitidos.csv", reloader)
 df_orgs = cargar_datos_csv("Orgs CONCI.csv", reloader)
 
-# --- CONFIGURACIÓN DE PESTAÑAS ---
-tab1, tab2 = st.tabs(["📝 Registro Personalizado", "📊 Tablero de Control y Seguimiento"])
+# --- CONFIGURACIÓN DE PESTAÑAS (Agregada la tercera pestaña) ---
+tab1, tab2, tab3 = st.tabs([
+    "📝 Registro Personalizado", 
+    "📊 Tablero de Control y Seguimiento",
+    "📚 Biblioteca de Reportes e Instructivos"
+])
 
 # ==========================================
 # PESTAÑA 1: REGISTRO MANUAL DE CAMPO
@@ -139,7 +161,6 @@ with tab1:
                 "Tipo de Registro / Actividad",
                 ["Visita / Ensayo AA", "Reporte 360", "Reporte personalizado", "Reunión / Capacitación individual"]
             )
-            # NUEVO CAMPO: Horas invertidas en la gestión
             horas_sel = st.number_input("Tiempo Invertido (en horas dedicadas)", min_value=0.1, max_value=24.0, value=1.0, step=0.5)
             observaciones_sel = st.text_area("Observaciones del Registro", placeholder="Escribí los detalles aquí...")
             
@@ -147,7 +168,6 @@ with tab1:
         boton_guardar = st.form_submit_button("💾 Guardar Registro de Actividad", use_container_width=True)
         
         if boton_guardar:
-            # Construcción exacta según las columnas de tu archivo registro_personalizado.csv
             nueva_actividad = pd.DataFrame([{
                 "fecha": fecha_sel.strftime("%d/%m/%Y"),
                 "razon_social": cliente_sel,
@@ -177,7 +197,6 @@ with tab2:
     df_manual_crudo = cargar_datos_csv("registro_personalizado.csv", reloader)
 
     if not df_auto_crudo.empty and not df_usuarios.empty:
-        # --- PROCESAMIENTO CANAL AUTOMÁTICO ---
         df_auto_crudo['fecha_hora'] = pd.to_datetime(df_auto_crudo['fecha_hora'], errors='coerce')
         df_auto_crudo = df_auto_crudo.dropna(subset=['fecha_hora'])
         
@@ -187,7 +206,6 @@ with tab2:
         
         df_auto_unificado = df_auto_m[['fecha_hora', 'nombre', 'accion', 'cliente', 'Origen']].copy()
         
-        # --- PROCESAMIENTO CANAL MANUAL ---
         if not df_manual_crudo.empty and len(df_manual_crudo) > 0:
             df_manual_crudo['fecha_hora'] = pd.to_datetime(df_manual_crudo['fecha'], format="%d/%m/%Y", errors='coerce')
             df_manual_crudo = df_manual_crudo.dropna(subset=['fecha_hora'])
@@ -195,10 +213,7 @@ with tab2:
             df_manual_m = pd.merge(df_manual_crudo, df_usuarios, left_on='usuario_x', right_on='usuarios', how='left')
             df_manual_m['nombre'] = df_manual_m['nombre'].fillna(df_manual_m['usuario_x'])
             
-            df_manual_m = df_manual_m.rename(columns={
-                'registro': 'accion',
-                'razon_social': 'cliente'
-            })
+            df_manual_m = df_manual_m.rename(columns={'registro': 'accion', 'razon_social': 'cliente'})
             df_manual_m['Origen'] = 'Manual (Registros Campo)'
             df_manual_unificado = df_manual_m[['fecha_hora', 'nombre', 'accion', 'cliente', 'Origen']].copy()
             
@@ -206,11 +221,9 @@ with tab2:
         else:
             df = df_auto_unificado
 
-        # --- BLINDAJE DE LA COLUMNA CLIENTE ---
         df['cliente'] = df['cliente'].fillna('No especificado').astype(str).str.strip()
         df['cliente'] = df['cliente'].replace(['', 'nan', 'N/A', 'None'], 'No especificado')
 
-        # --- FILTROS ---
         st.sidebar.markdown("---")
         st.sidebar.header("Filtros de Análisis")
         
@@ -227,7 +240,6 @@ with tab2:
         origenes_disponibles = sorted(df['Origen'].unique())
         origenes_seleccionados = st.sidebar.multiselect("Origen de la Actividad", origenes_disponibles, default=origenes_disponibles)
 
-        # Filtrado
         df_filtrado = df[
             (df['fecha_hora'].dt.date >= f_inicio) & 
             (df['fecha_hora'].dt.date <= f_final) & 
@@ -236,7 +248,6 @@ with tab2:
             (df['Origen'].isin(origenes_seleccionados))
         ]
 
-        # 4. KPIs
         total_acciones = len(df_filtrado)
         usuarios_activos = df_filtrado['nombre'].nunique()
         exportaciones = len(df_filtrado[df_filtrado['accion'].str.contains('Exportó|PDF|Reporte|Visita|Reunión', na=False, case=False)])
@@ -248,23 +259,12 @@ with tab2:
         
         st.markdown("---")
         
-        # 5. Gráficos
         col1, col2 = st.columns(2)
-        
         with col1:
             st.subheader("📌 Actividad por Colaborador")
             actividad_usuario = df_filtrado['nombre'].value_counts().reset_index()
             actividad_usuario.columns = ['Colaborador', 'Cantidad de Acciones']
-            
-            fig_bar = px.bar(
-                actividad_usuario, 
-                x='Cantidad de Acciones', 
-                y='Colaborador', 
-                orientation='h',
-                color='Cantidad de Acciones',
-                color_continuous_scale='Blugrn',
-                template='plotly_white'
-            )
+            fig_bar = px.bar(actividad_usuario, x='Cantidad de Acciones', y='Colaborador', orientation='h', color='Cantidad de Acciones', color_continuous_scale='Blugrn', template='plotly_white')
             fig_bar.update_layout(yaxis={'categoryorder':'total ascending'})
             st.plotly_chart(fig_bar, use_container_width=True)
 
@@ -272,40 +272,18 @@ with tab2:
             st.subheader("⚙️ Segmentación por Origen de Datos")
             origen_count = df_filtrado['Origen'].value_counts().reset_index()
             origen_count.columns = ['Origen', 'Frecuencia']
-            
-            fig_pie = px.pie(
-                origen_count, 
-                values='Frecuencia', 
-                names='Origen', 
-                hole=0.4,
-                color_discrete_sequence=['#1f77b4', '#2ca02c'],
-                template='plotly_white'
-            )
+            fig_pie = px.pie(origen_count, values='Frecuencia', names='Origen', hole=0.4, color_discrete_sequence=['#1f77b4', '#2ca02c'], template='plotly_white')
             st.plotly_chart(fig_pie, use_container_width=True)
 
         st.markdown("---")
-        
-        # 6. Evolución Temporal
         st.subheader("📈 Evolución de Gestiones en el Tiempo")
         df_filtrado['fecha'] = df_filtrado['fecha_hora'].dt.date
         evolucion = df_filtrado.groupby(['fecha', 'Origen']).size().reset_index(name='Cantidad')
-        
-        fig_line = px.line(
-            evolucion, 
-            x='fecha', 
-            y='Cantidad', 
-            color='Origen',
-            markers=True,
-            line_shape='spline',
-            color_discrete_map={'Manual (Registros Campo)': '#2ca02c', 'Automático (Uso de Apps)': '#1f77b4'},
-            template='plotly_white'
-        )
+        fig_line = px.line(evolucion, x='fecha', y='Cantidad', color='Origen', markers=True, line_shape='spline', color_discrete_map={'Manual (Registros Campo)': '#2ca02c', 'Automático (Uso de Apps)': '#1f77b4'}, template='plotly_white')
         st.plotly_chart(fig_line, use_container_width=True)
 
-        # 7. Clasificación de Tareas
         st.markdown("---")
         st.subheader("📋 Análisis de Reportes y Tareas de Campo por Tipo")
-        
         df_exportaciones = df_filtrado[df_filtrado['accion'].str.contains('Exportó|PDF|Reporte|Visita|Reunión|Capacitación', na=False, case=False)].copy()
         
         if not df_exportaciones.empty:
@@ -324,37 +302,52 @@ with tab2:
             reportes_tipo = reportes_tipo.sort_values(by='Cantidad', ascending=False)
             
             col_tabla, col_grafico = st.columns([2, 3])
-            
             with col_tabla:
                 st.markdown("#### 🔢 Resumen en Tabla")
                 st.dataframe(reportes_tipo, use_container_width=True, hide_index=True)
-                
             with col_grafico:
                 st.markdown("#### 📊 Distribución Visual Unificada")
-                fig_reportes = px.bar(
-                    reportes_tipo,
-                    x='Cantidad',
-                    y='Tipo de Tarea',
-                    color='Origen',
-                    orientation='h',
-                    barmode='stack',
-                    color_discrete_map={'Manual (Registros Campo)': '#2ca02c', 'Automático (Uso de Apps)': '#1f77b4'},
-                    template='plotly_white'
-                )
+                fig_reportes = px.bar(reportes_tipo, x='Cantidad', y='Tipo de Tarea', color='Origen', orientation='h', barmode='stack', color_discrete_map={'Manual (Registros Campo)': '#2ca02c', 'Automático (Uso de Apps)': '#1f77b4'}, template='plotly_white')
                 fig_reportes.update_layout(yaxis={'categoryorder':'total ascending'})
                 st.plotly_chart(fig_reportes, use_container_width=True)
         else:
             st.info("No se registraron tareas ni exportaciones en los filtros seleccionados.")
         
-        # 8. Historial Final
         st.markdown("---")
         st.subheader("🔍 Historial Unificado de Actividad Reciente")
-        
         columnas_mostrar = ['fecha_hora', 'nombre', 'accion', 'cliente', 'Origen']
         df_mostrar = df_filtrado[columnas_mostrar].sort_values(by='fecha_hora', ascending=False).copy()
         df_mostrar['fecha_hora'] = df_mostrar['fecha_hora'].dt.strftime('%d/%m/%Y %H:%M:%S')
-        
         st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
-
     else:
         st.warning("Asegurate de que las bases de datos estén cargadas en la rama 'main' de tu repositorio público.")
+
+# ==========================================
+# PESTAÑA 3: BIBLIOTECA DE REPORTES
+# ==========================================
+with tab3:
+    st.header("📚 Central de Aplicaciones e Instructivos")
+    st.markdown("Catálogo de accesos rápidos a las herramientas de reportes de Soluciones Integrales y sus manuales de proceso paso a paso.")
+    st.markdown("---")
+
+    # Recorremos el diccionario para armar las tarjetas de manera limpia y dinámica
+    for nombre_reporte, info in REPORTES_CONFIG.items():
+        # Contenedor visual para agrupar cada reporte como una tarjeta independiente
+        with st.container():
+            col_titulo, col_links = st.columns([2, 1])
+            
+            with col_titulo:
+                st.subheader(f"🟢 {nombre_reporte}")
+                
+            with col_links:
+                # Armamos dos subcolumnas adentro para acomodar los botones a la derecha
+                c_btn1, c_btn2 = st.columns(2)
+                with c_btn1:
+                    st.link_button("🚀 Abrir Reporte", info["url_reporte"], use_container_width=True)
+                with c_btn2:
+                    st.link_button("📖 Ver Instructivo", info["url_instructivo"], use_container_width=True)
+            
+            # Descripción abajo de los botones
+            st.markdown(f"**Descripción:** {info['descripcion']}")
+            st.markdown("<div style='margin-bottom: 25px;'></div>", unsafe_allow_html=True)
+            st.divider()
