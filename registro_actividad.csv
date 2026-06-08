@@ -47,4 +47,5 @@ fecha_hora,usuario,accion,cliente
 2026-06-05 13:47:36,X635152,Ingreso al Auditoria Cosecha,
 2026-06-08 18:25:38,X900132,Ingreso al Auditoria Cosecha,
 2026-06-08 18:25:58,X900132,Exportó Auditoría de Cosecha a PDF,No especificado
-2026-06-08 18:40:47,X090165,Ingreso al Checklist,N/A
+2026-06-08 18:40:47,X090165,Ingreso al Checklist,
+2026-06-08 18:45:01,X090165,Ingreso al Auditoria Cosecha,N/A
