@@ -60,4 +60,5 @@ fecha_hora,usuario,accion,cliente
 2026-06-09 15:29:06,X900132,Ingreso al Auditoria Cosecha,
 2026-06-09 15:29:37,X900132,Exportó Auditoría de Cosecha a PDF,FABJAV HNOS SAS
 2026-06-09 18:06:14,X090165,Ingreso al Cierre de Cosecha,
-2026-06-09 18:18:06,X900132,Ingreso al Cierre de Cosecha,N/A
+2026-06-09 18:18:06,X900132,Ingreso al Cierre de Cosecha,
+2026-06-09 18:23:15,X900132,Exportó Reporte Cierre Cosecha a PDF,COLETTA
