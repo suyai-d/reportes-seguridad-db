@@ -109,4 +109,5 @@ fecha_hora,usuario,accion,cliente
 2026-06-11 19:26:03,X090165,Ingreso al Cierre de Cosecha,
 2026-06-11 19:47:00,X090165,Ingreso al Cierre de Cosecha,
 2026-06-12 12:01:02, X090165,Ingreso al Cierre de Cosecha,
-2026-06-12 12:29:11,X090165,Ingreso al Auditoria Cosecha,N/A
+2026-06-12 12:29:11,X090165,Ingreso al Auditoria Cosecha,
+2026-06-12 12:31:43,X090165,Exportó Auditoría de Cosecha a PDF,No especificado
