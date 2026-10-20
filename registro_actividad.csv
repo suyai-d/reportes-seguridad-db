@@ -222,4 +222,5 @@ fecha_hora,usuario,accion,cliente
 2026-10-13 17:17:04,X225841,Ingreso al Reporte de Tractores,
 2026-10-14 17:53:43,X225841,Ingreso al Cierre de Cosecha,
 2026-10-14 18:03:32,X225841,Exportó Reporte Cierre Cosecha a PDF,ADJ SRL
-2026-10-14 18:04:08,X225841,Ingreso al Auditoria Cosecha,N/A
+2026-10-14 18:04:08,X225841,Ingreso al Auditoria Cosecha,
+2026-10-20 13:37:43,X635152,Ingreso al Cierre de Cosecha,N/A
